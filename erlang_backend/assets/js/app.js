@@ -19,19 +19,97 @@ import "../vendor/topbar.js"
 
 let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 
+const STUCK_SUBMIT_MS = 12_000
+const RELOAD_FALLBACK_MS = 5_000
+
 let Hooks = {
   AutoScroll: {
     mounted() {
+      this.observer = new MutationObserver(() => this.scrollToBottom())
+      this.observer.observe(this.el, {childList: true, subtree: true, characterData: true})
       this.scrollToBottom()
     },
     updated() {
       this.scrollToBottom()
     },
+    destroyed() {
+      this.observer?.disconnect()
+    },
     scrollToBottom() {
-      // Use requestAnimationFrame for smooth after render
       requestAnimationFrame(() => {
         this.el.scrollTop = this.el.scrollHeight
       })
+    }
+  },
+
+  ConnectionStatus: {
+    mounted() {
+      this.banner = this.el.querySelector("[data-reconnect-banner]")
+    },
+    disconnected() {
+      this.banner?.classList.remove("hidden")
+    },
+    reconnected() {
+      this.banner?.classList.add("hidden")
+      this.pushEvent("sync_state", {})
+    }
+  },
+
+  ChatForm: {
+    mounted() {
+      this.watchdog = null
+      this.reloadTimer = null
+      this.shouldRefocus = false
+      this.onSubmit = () => {
+        this.shouldRefocus = true
+        this.startWatchdog()
+      }
+      this.el.addEventListener("submit", this.onSubmit)
+    },
+    destroyed() {
+      this.clearTimers()
+      this.el.removeEventListener("submit", this.onSubmit)
+    },
+    updated() {
+      if (!this.el.classList.contains("phx-submit-loading")) {
+        this.clearTimers()
+      }
+      if (this.shouldRefocus) {
+        const input = this.el.querySelector("#chat-input")
+        if (input && !this.el.classList.contains("phx-submit-loading")) {
+          requestAnimationFrame(() => input.focus())
+          this.shouldRefocus = false
+        }
+      }
+    },
+    startWatchdog() {
+      this.clearTimers()
+      const baselineCount = document.querySelectorAll("#messages [id^='msg-']").length
+
+      this.watchdog = setTimeout(() => {
+        if (!this.isStuck(baselineCount)) return
+        window.liveSocket.reconnect()
+        this.reloadTimer = setTimeout(() => {
+          if (this.isStuck(baselineCount)) {
+            window.location.reload()
+          }
+        }, RELOAD_FALLBACK_MS)
+      }, STUCK_SUBMIT_MS)
+    },
+    isStuck(baselineCount) {
+      if (!this.el.classList.contains("phx-submit-loading")) return false
+      const msgCount = document.querySelectorAll("#messages [id^='msg-']").length
+      return msgCount <= baselineCount
+    },
+    clearTimers() {
+      if (this.watchdog) {
+        clearTimeout(this.watchdog)
+        this.watchdog = null
+      }
+      if (this.reloadTimer) {
+        clearTimeout(this.reloadTimer)
+        this.reloadTimer = null
+      }
     }
   }
 }
@@ -46,11 +124,22 @@ window.topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
 window.addEventListener("phx:page-loading-start", _info => window.topbar.show())
 window.addEventListener("phx:page-loading-stop", _info => window.topbar.hide())
 
-// connect if there are any LiveViews on the page
 liveSocket.connect()
 
-// expose liveSocket on window for web console debug logs and latency simulation
-// >> liveSocket.enableDebug()
-// >> liveSocket.enableLatencySim(1000)  // enabled for duration of browser session
-// >> liveSocket.disableLatencySim()
+liveSocket.getSocket().onClose(() => {
+  console.debug("ws closed")
+})
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && !liveSocket.isConnected()) {
+    liveSocket.reconnect()
+  }
+})
+
+window.addEventListener("focus", () => {
+  if (!liveSocket.isConnected()) {
+    liveSocket.reconnect()
+  }
+})
+
 window.liveSocket = liveSocket

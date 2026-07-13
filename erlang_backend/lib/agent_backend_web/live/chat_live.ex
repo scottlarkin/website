@@ -74,7 +74,7 @@ defmodule AgentBackendWeb.ChatLive do
           "What is your experience?",
           "How can I contact you?"
         ],
-        page_title: "Chat"
+        page_title: "scott"
       )
       |> subscribe_chat(chat_id)
 
@@ -116,6 +116,22 @@ defmodule AgentBackendWeb.ChatLive do
 
   defp load_chat_messages(chat_id) when is_binary(chat_id) do
     AgentBackend.ChatSessions.get(chat_id) |> Map.get(:messages, [])
+  end
+
+  defp load_sync_state(nil), do: {[], false}
+
+  defp load_sync_state(chat_id) when is_binary(chat_id) do
+    messages = load_chat_messages(chat_id)
+    {messages, stream_in_progress?(messages)}
+  end
+
+  defp stream_in_progress?([]), do: false
+
+  defp stream_in_progress?(messages) do
+    case List.last(messages) do
+      %{role: "assistant", content: ""} -> true
+      _ -> false
+    end
   end
 
   defp chat_topic(chat_id) when is_binary(chat_id), do: "chat:#{chat_id}"
@@ -182,6 +198,16 @@ defmodule AgentBackendWeb.ChatLive do
   @impl true
   def handle_event("send_suggestion", %{"message" => message}, socket) do
     do_send_message(message, socket)
+  end
+
+  @impl true
+  def handle_event("sync_state", _params, socket) do
+    require Logger
+    Logger.info("chat sync_state chat_id=#{inspect(socket.assigns.chat_id)}")
+
+    {messages, is_loading} = load_sync_state(socket.assigns.chat_id)
+
+    {:noreply, assign(socket, messages: messages, is_loading: is_loading, input: "")}
   end
 
   defp do_send_message(raw_message, socket) do

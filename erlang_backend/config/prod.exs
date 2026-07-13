@@ -1,8 +1,8 @@
 import Config
 
 config :agent_backend, AgentBackendWeb.Endpoint,
-  http: [port: 4000],
-  url: [host: "localhost", port: 4000],
+  http: [port: 3000, ip: {0, 0, 0, 0}],
+  url: [host: "localhost", port: 3000],
   cache_static_manifest: "priv/static/cache_manifest.json",
   server: true,
   root: ".",

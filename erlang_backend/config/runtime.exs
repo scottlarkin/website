@@ -1,8 +1,27 @@
 import Config
 
+# Override listen port for local dev/testing without touching prod (default 3000).
+# Example: PORT=3001 mix phx.server  — or use scripts/dev-server.sh
+if env_port = System.get_env("PORT") do
+  port = String.to_integer(env_port)
+
+  config :agent_backend, AgentBackendWeb.Endpoint,
+    http: [ip: {0, 0, 0, 0}, port: port],
+    url: [host: System.get_env("PHX_URL_HOST") || "localhost", port: port]
+end
+
+if config_env() == :dev do
+  secret_key_base = System.get_env("SECRET_KEY_BASE")
+
+  if is_binary(secret_key_base) and byte_size(secret_key_base) >= 64 do
+    config :agent_backend, AgentBackendWeb.Endpoint, secret_key_base: secret_key_base
+  end
+end
+
+# Prod public URL only — don't override dev/test instances on alternate ports.
 host = System.get_env("PHX_HOST")
 
-if host do
+if host && config_env() == :prod do
   config :agent_backend, AgentBackendWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"]
 end

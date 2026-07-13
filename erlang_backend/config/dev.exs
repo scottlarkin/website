@@ -6,5 +6,5 @@ config :agent_backend, AgentBackendWeb.Endpoint,
   code_reloader: true,
   check_origin: false,
   watchers: [],
-  secret_key_base: "dev_only_not_for_production_use_mix_phx_gen_secret_in_env000",
+  secret_key_base: "dev_only_not_for_production_use_mix_phx_gen_secret_in_env0000000000000",
   live_view: [signing_salt: "dev-live-view-salt"]

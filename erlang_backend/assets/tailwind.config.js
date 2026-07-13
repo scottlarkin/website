@@ -22,6 +22,8 @@ module.exports = {
     'focus:border-zinc-700', 'focus:outline-none',
     'hover:bg-zinc-800', 'hover:text-zinc-200', 'hover:text-zinc-300', 'active:bg-zinc-950',
     'disabled:opacity-60',
+    'hidden',
+    'border-amber-900/50', 'bg-amber-950/40', 'text-amber-200/80',
     'transition-colors',
     'backdrop-blur',
     'animate-bounce',
