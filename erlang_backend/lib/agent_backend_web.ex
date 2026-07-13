@@ -18,7 +18,6 @@ defmodule AgentBackendWeb do
   defmacro __using__(:live_view) do
     quote do
       use Phoenix.LiveView, layout: {AgentBackendWeb.LayoutView, :app}
-      import AgentBackendWeb.CoreComponents
       import AgentBackendWeb.Gettext
       import Phoenix.LiveView.Router
     end
@@ -28,7 +27,6 @@ defmodule AgentBackendWeb do
     quote do
       use Phoenix.View, namespace: AgentBackendWeb
       import Phoenix.Component
-      import AgentBackendWeb.CoreComponents
     end
   end
 
@@ -48,7 +46,6 @@ defmodule AgentBackendWeb do
   def live_view do
     quote do
       use Phoenix.LiveView, layout: {AgentBackendWeb.LayoutView, :root}
-      import AgentBackendWeb.CoreComponents
       import AgentBackendWeb.Gettext
       import Phoenix.LiveView.Router
     end
@@ -58,7 +55,6 @@ defmodule AgentBackendWeb do
     quote do
       use Phoenix.View, namespace: AgentBackendWeb
       import Phoenix.Component
-      import AgentBackendWeb.CoreComponents
     end
   end
 
@@ -80,7 +76,6 @@ defmodule AgentBackendWeb do
     quote do
       use Phoenix.Component
       import Phoenix.Component
-      import AgentBackendWeb.CoreComponents
       import AgentBackendWeb.Gettext
     end
   end
