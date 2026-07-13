@@ -1,0 +1,26 @@
+# Secrets and personal content (keep local only)
+.env
+prompt.md
+
+# Elixir / Erlang
+erlang_backend/_build/
+erlang_backend/deps/
+erlang_backend/erl_crash.dump
+erlang_backend/Mnesia.*/
+# Frontend dependencies and build output
+erlang_backend/assets/node_modules/
+erlang_backend/assets/priv/
+erlang_backend/priv/static/*
+!erlang_backend/priv/static/.gitkeep
+
+# Runtime data and logs
+erlang_backend/priv/chat_sessions/
+erlang_backend/server.log
+
+# OS and editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/

@@ -1,0 +1,15 @@
+[Unit]
+Description=Agent Backend Phoenix Server (port 3000)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/s/repos/website/erlang_backend
+Environment=PATH=/nix/store/7yxrvcdy707kdl47asvfd9c6lwwg08dy-elixir-1.18.4/bin:/nix/store/5z3qpckb7qhdpvlqimzfp65z03w73za3-erlang-27.3.4.1/bin:/run/current-system/sw/bin:/usr/bin:/bin
+EnvironmentFile=-/home/s/repos/website/.env
+ExecStart=/home/s/repos/website/erlang_backend/scripts/server.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

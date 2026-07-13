@@ -1,0 +1,18 @@
+{
+  "name": "agent_backend_assets",
+  "version": "1.0.0",
+  "description": "Assets for Agent Backend",
+  "scripts": {
+    "build": "tailwindcss -i ../assets/css/app.css -o ../priv/static/assets/app.css --minify",
+    "watch": "tailwindcss -i ../assets/css/app.css -o ../priv/static/assets/app.css --watch"
+  },
+  "devDependencies": {
+    "autoprefixer": "^10.4.0",
+    "phoenix_html": "file:../deps/phoenix_html",
+    "postcss": "^8.4.0",
+    "tailwindcss": "^3.4.0"
+  },
+  "dependencies": {
+    "@tailwindcss/typography": "^0.5.20"
+  }
+}

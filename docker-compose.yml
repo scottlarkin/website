@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  agent-backend:
+    build:
+      context: ./erlang_backend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - MIX_ENV=dev
+      - PHX_HOST=localhost
+      - SECRET_KEY_BASE=${SECRET_KEY_BASE}
+      - SYSTEM_PROMPT=${SYSTEM_PROMPT}
+      - PORT=3000
+    volumes:
+      - ./erlang_backend:/app
+      - /app/deps
+      - /app/_build
+    command: >
+      sh -c "
+        mix deps.get &&
+        mix compile &&
+        mix phx.server
+      "
+
+  # Optional: Add a separate service for the LLM proxy if needed
+  # llm-proxy:
+  #   image: ghcr.io/portkey-ai/gateway:latest
+  #   ports:
+  #     - "8787:8787"
+  #   environment:
+  #     - CONFIG_FILE=/config.yaml
+  #   volumes:
+  #     - ./config.yaml:/config.yaml
+
+networks:
+  default:
+    name: agent-network
