@@ -68,6 +68,8 @@ defmodule AgentBackendWeb.ChatLive do
         is_loading: false,
         agent_status: nil,
         held_draft: nil,
+        validation_badge: false,
+        thinking_line: nil,
         chat_id: chat_id,
         suggestions: [
           "What are your technical skills?",
@@ -189,11 +191,27 @@ defmodule AgentBackendWeb.ChatLive do
   end
 
   @impl true
-  def handle_event("new_chat", _params, socket) do
+  def handle_event("new_chat", _params, socket), do: new_chat(socket)
+
+  defp new_chat(socket) do
     {:noreply,
      socket
-     |> assign(messages: [], input: "", chat_id: nil, is_loading: false, agent_status: nil, held_draft: nil)
+     |> assign(
+       messages: [],
+       input: "",
+       chat_id: nil,
+       is_loading: false,
+       agent_status: nil,
+       held_draft: nil,
+       validation_badge: false,
+       thinking_line: nil
+     )
      |> Phoenix.LiveView.push_navigate(to: "/")}
+  end
+
+  @impl true
+  def handle_event("dismiss_validation_badge", _params, socket) do
+    {:noreply, assign(socket, validation_badge: false)}
   end
 
   @impl true
@@ -266,7 +284,17 @@ defmodule AgentBackendWeb.ChatLive do
         socket
         |> unsubscribe_chat(old_chat_id)
         |> subscribe_chat(chat_id)
-        |> assign(messages: ui_messages, is_loading: true, agent_status: :generating, held_draft: nil, input: "", chat_id: chat_id)
+        |> assign(
+          messages: ui_messages,
+          is_loading: true,
+          agent_status: :generating,
+          held_draft: nil,
+          validation_badge: false,
+          thinking_line: AgentBackendWeb.TypingLines.random_line(),
+          input: "",
+          chat_id: chat_id
+        )
+        |> schedule_thinking_tick()
         |> broadcast_chat_sync(ui_messages, true, :generating)
 
       # First message: sync URL to /c/:id without remounting (push_patch, not push_navigate).
@@ -308,6 +336,20 @@ defmodule AgentBackendWeb.ChatLive do
         end
       end)
 
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_info(:thinking_tick, socket) do
+    if thinking_active?(socket) do
+      line = AgentBackendWeb.TypingLines.random_line(socket.assigns.thinking_line)
+
+      {:noreply,
+       socket
+       |> assign(thinking_line: line)
+       |> schedule_thinking_tick()}
+    else
       {:noreply, socket}
     end
   end
@@ -413,7 +455,9 @@ defmodule AgentBackendWeb.ChatLive do
   @impl true
   def handle_info(:stream_done, socket), do: handle_agent_event(:stream_done, socket)
 
-  defp handle_agent_event(:stream_done, socket) do
+  defp handle_agent_event(:stream_done, socket), do: handle_agent_event({:stream_done, %{}}, socket)
+
+  defp handle_agent_event({:stream_done, meta}, socket) when is_map(meta) do
     # Ensure the final state is saved
     if chat_id = socket.assigns.chat_id do
       AgentBackend.ChatSessions.save(chat_id, socket.assigns.messages)
@@ -421,7 +465,13 @@ defmodule AgentBackendWeb.ChatLive do
 
     socket =
       socket
-      |> assign(is_loading: false, agent_status: nil, held_draft: nil)
+      |> assign(
+        is_loading: false,
+        agent_status: nil,
+        held_draft: nil,
+        thinking_line: nil,
+        validation_badge: Map.get(meta, :validated, false)
+      )
       |> broadcast_chat_sync(socket.assigns.messages, false, nil, nil)
 
     {:noreply, socket}
@@ -447,7 +497,13 @@ defmodule AgentBackendWeb.ChatLive do
 
         socket =
           socket
-          |> assign(messages: messages, is_loading: false, agent_status: nil, held_draft: nil)
+          |> assign(
+            messages: messages,
+            is_loading: false,
+            agent_status: nil,
+            held_draft: nil,
+            thinking_line: nil
+          )
           |> broadcast_chat_sync(messages, false, nil, nil)
 
         {:noreply, socket}
@@ -504,7 +560,7 @@ defmodule AgentBackendWeb.ChatLive do
       on_reset: fn -> broadcast_agent_event(chat_id, :stream_reset) end,
       on_hold_draft: fn -> broadcast_agent_event(chat_id, :hold_draft) end,
       on_status: fn status -> broadcast_agent_event(chat_id, {:agent_status, status}) end,
-      on_done: fn -> broadcast_agent_event(chat_id, :stream_done) end,
+      on_done: fn meta -> broadcast_agent_event(chat_id, {:stream_done, meta}) end,
       on_error: fn msg ->
         broadcast_agent_event(chat_id, {:stream_error, msg})
         AgentBackend.SlackMonitor.log_error(chat_id, :stream_error, msg)
@@ -533,6 +589,23 @@ defmodule AgentBackendWeb.ChatLive do
     AgentBackend.SlackMonitor.log_assistant_message(chat_id, content)
   end
 
+  defp schedule_thinking_tick(socket) do
+    Process.send_after(self(), :thinking_tick, 2000)
+    socket
+  end
+
+  defp thinking_active?(socket) do
+    socket.assigns.is_loading and empty_assistant_placeholder?(socket.assigns.messages)
+  end
+
+  defp empty_assistant_placeholder?(messages) do
+    case List.last(messages) do
+      %{role: "assistant", content: ""} -> true
+      %{"role" => "assistant", "content" => ""} -> true
+      _ -> false
+    end
+  end
+
   defp agent_timeout_ms do
     case Integer.parse(System.get_env("AGENT_TIMEOUT_MS", "180000")) do
       {n, _} when n > 0 -> n
@@ -545,6 +618,19 @@ defmodule AgentBackendWeb.ChatLive do
   def agent_status_label(:revising), do: "Improving accuracy…"
   def agent_status_label(label) when is_binary(label), do: label
   def agent_status_label(_), do: nil
+
+  def format_timestamp(""), do: nil
+  def format_timestamp(nil), do: nil
+
+  def format_timestamp(iso) when is_binary(iso) do
+    case DateTime.from_iso8601(iso) do
+      {:ok, dt, _} ->
+        Calendar.strftime(dt, "%d %b, %H:%M UTC")
+
+      _ ->
+        nil
+    end
+  end
 
   # Render assistant content as nice Markdown (with basic sanitization fallback)
   defp render_markdown(nil), do: ""

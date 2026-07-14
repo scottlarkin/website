@@ -1,26 +1,149 @@
 // CSS is built separately by Tailwind (npm run build) and linked in root.html.heex.
 
-// If you want to use Phoenix channels, run `mix help phx.gen.channel`
-// to get started and then uncomment the line below.
-// import "./socket"
-
-// Include phoenix_html to handle form submission and UJS in forms.
-// Imported directly from the Phoenix dependency's shipped JS file (no npm
-// package required) so esbuild can bundle it instead of leaving an external
-// `require("phoenix_html")` that browsers cannot resolve.
 import "../../deps/phoenix_html/priv/static/phoenix_html.js"
-
-// Establish Phoenix Socket and LiveView configuration
 import {Socket} from "../vendor/phoenix.mjs"
 import {LiveSocket} from "../vendor/phoenix_live_view.esm.js"
-// topbar.js is a plain script (no ES exports) that sets `window.topbar` as a
-// side effect, so we import it for that side effect and use the global.
 import "../vendor/topbar.js"
 
 let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 
 const STUCK_SUBMIT_MS = 12_000
 const RELOAD_FALLBACK_MS = 5_000
+
+function decodeAttrValue(raw) {
+  if (!raw) return ""
+  const ta = document.createElement("textarea")
+  ta.innerHTML = raw
+  return ta.value
+}
+
+function parseJsonAttr(el, name) {
+  const raw = el.getAttribute(name)
+  if (!raw) return []
+
+  for (const candidate of [raw, decodeAttrValue(raw)]) {
+    try {
+      const parsed = JSON.parse(candidate)
+      if (Array.isArray(parsed)) return parsed
+    } catch (_e) {
+      // try next decode strategy
+    }
+  }
+
+  return []
+}
+
+function copyToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    return navigator.clipboard.writeText(text).catch(() => legacyCopy(text))
+  }
+  return legacyCopy(text)
+}
+
+function legacyCopy(text) {
+  return new Promise((resolve, reject) => {
+    const ta = document.createElement("textarea")
+    ta.value = text
+    ta.style.position = "fixed"
+    ta.style.left = "-9999px"
+    document.body.appendChild(ta)
+    ta.select()
+    try {
+      document.execCommand("copy") ? resolve() : reject()
+    } catch (e) {
+      reject(e)
+    } finally {
+      document.body.removeChild(ta)
+    }
+  })
+}
+
+function stopTypewriter(el) {
+  const state = el._typewriterState
+  if (!state) return
+  clearTimeout(state.timer)
+  delete el._typewriterState
+  delete el.dataset.uxInit
+}
+
+function startTypewriter(el) {
+  if (el.dataset.uxInit === "typewriter") return
+
+  const textEl = el.querySelector("[data-typewriter]")
+  if (!textEl) return
+
+  const suggestions = parseJsonAttr(el, "data-suggestions")
+  if (suggestions.length === 0) return
+
+  stopTypewriter(el)
+
+  const state = {
+    suggestionIndex: 0,
+    charIndex: 0,
+    deleting: false,
+    currentText: "",
+    timer: null
+  }
+  el._typewriterState = state
+  el.dataset.uxInit = "typewriter"
+
+  const tick = () => {
+    const target = suggestions[state.suggestionIndex]
+
+    if (!state.deleting && state.charIndex < target.length) {
+      state.charIndex++
+      state.currentText = target.slice(0, state.charIndex)
+      textEl.textContent = state.currentText
+      state.timer = setTimeout(tick, 40)
+    } else if (!state.deleting) {
+      state.timer = setTimeout(() => {
+        state.deleting = true
+        tick()
+      }, 2000)
+    } else if (state.charIndex > 0) {
+      state.charIndex--
+      state.currentText = target.slice(0, state.charIndex)
+      textEl.textContent = state.currentText
+      state.timer = setTimeout(tick, 20)
+    } else {
+      state.deleting = false
+      state.suggestionIndex = (state.suggestionIndex + 1) % suggestions.length
+      state.timer = setTimeout(tick, 400)
+    }
+  }
+
+  tick()
+}
+
+function flashCopyLabel(label, text, resetMs = 1500) {
+  if (!label) return
+  const defaultLabel = label.dataset.defaultLabel || label.textContent || "Share"
+  if (!label.dataset.defaultLabel) label.dataset.defaultLabel = defaultLabel
+  label.textContent = text
+  setTimeout(() => {
+    label.textContent = defaultLabel
+  }, resetMs)
+}
+
+function handleCopyLink(btn) {
+  const url = btn.dataset.copyUrl || window.location.href
+  const label = btn.querySelector("[data-copy-label]")
+  copyToClipboard(url)
+    .then(() => flashCopyLabel(label, "Copied"))
+    .catch(() => flashCopyLabel(label, "Failed"))
+}
+
+function initChatUx(root = document) {
+  root.querySelectorAll("[data-suggestion-typewriter]").forEach((el) => startTypewriter(el))
+}
+
+function showReconnectBanner() {
+  document.querySelector("[data-reconnect-banner]")?.classList.remove("hidden")
+}
+
+function hideReconnectBanner() {
+  document.querySelector("[data-reconnect-banner]")?.classList.add("hidden")
+}
 
 let Hooks = {
   AutoScroll: {
@@ -39,19 +162,6 @@ let Hooks = {
       requestAnimationFrame(() => {
         this.el.scrollTop = this.el.scrollHeight
       })
-    }
-  },
-
-  ConnectionStatus: {
-    mounted() {
-      this.banner = this.el.querySelector("[data-reconnect-banner]")
-    },
-    disconnected() {
-      this.banner?.classList.remove("hidden")
-    },
-    reconnected() {
-      this.banner?.classList.add("hidden")
-      this.pushEvent("sync_state", {})
     }
   },
 
@@ -102,6 +212,13 @@ let Hooks = {
         }
       }
     },
+    disconnected() {
+      showReconnectBanner()
+    },
+    reconnected() {
+      hideReconnectBanner()
+      this.pushEvent("sync_state", {})
+    },
     startWatchdog() {
       this.clearTimers()
       const baselineCount = document.querySelectorAll("#messages [id^='msg-']").length
@@ -139,15 +256,49 @@ let liveSocket = new LiveSocket("/live", Socket, {
   hooks: Hooks
 })
 
-// Show progress bar on live navigation and form submits
 window.topbar.config({barColors: {0: "#29d"}, shadowColor: "rgba(0, 0, 0, .3)"})
 window.addEventListener("phx:page-loading-start", _info => window.topbar.show())
-window.addEventListener("phx:page-loading-stop", _info => window.topbar.hide())
+window.addEventListener("phx:page-loading-stop", _info => {
+  window.topbar.hide()
+  observeChatUx()
+})
 
 liveSocket.connect()
 
+document.addEventListener("click", (e) => {
+  const copyBtn = e.target.closest("#copy-link-btn, [data-copy-link]")
+  if (!copyBtn) return
+  e.preventDefault()
+  handleCopyLink(copyBtn)
+}, true)
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    document.getElementById("chat-input")?.focus()
+    return
+  }
+
+  const mod = e.metaKey || e.ctrlKey
+  if (mod && e.key.toLowerCase() === "k") {
+    e.preventDefault()
+    document.getElementById("new-chat-btn")?.click()
+  }
+}, true)
+
+function observeChatUx() {
+  const messages = document.getElementById("messages")
+  if (!messages || messages.dataset.uxObserved === "1") return
+  messages.dataset.uxObserved = "1"
+  const uxObserver = new MutationObserver(() => initChatUx(messages))
+  uxObserver.observe(messages, {childList: true, subtree: true})
+  initChatUx(messages)
+}
+
+observeChatUx()
+
 liveSocket.getSocket().onClose(() => {
   console.debug("ws closed")
+  showReconnectBanner()
 })
 
 document.addEventListener("visibilitychange", () => {

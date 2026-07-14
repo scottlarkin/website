@@ -40,7 +40,7 @@ defmodule AgentBackend.AgentLoop do
             run_tool_round(messages, content, tool_calls, ctx, callbacks, iter, max)
 
           recently_passed_validation?(messages) ->
-            callbacks.on_done.()
+            callbacks.on_done.(%{validated: false})
             content
 
           content == "" ->
@@ -85,7 +85,7 @@ defmodule AgentBackend.AgentLoop do
       :pass ->
         require Logger
         Logger.info("AgentLoop validation passed iter=#{iter}")
-        callbacks.on_done.()
+        callbacks.on_done.(%{validated: true})
         content
 
       {:fail, issues} ->
@@ -95,7 +95,7 @@ defmodule AgentBackend.AgentLoop do
 
         if retries >= max_validation_retries() or iter >= max do
           Logger.warning("AgentLoop validation retries exhausted, accepting draft (retries=#{retries})")
-          callbacks.on_done.()
+          callbacks.on_done.(%{validated: false})
           content
         else
           callbacks.on_hold_draft.()
@@ -177,12 +177,12 @@ defmodule AgentBackend.AgentLoop do
         content = unwrap_draft_json(content)
         callbacks.on_reset.()
         callbacks.on_token.(content)
-        callbacks.on_done.()
+        callbacks.on_done.(%{validated: false})
         content
 
       _ ->
         if is_binary(last_content) and last_content != "" do
-          callbacks.on_done.()
+          callbacks.on_done.(%{validated: false})
           last_content
         else
           callbacks.on_error.("Agent loop exceeded max iterations without a final response.")
