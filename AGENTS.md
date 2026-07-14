@@ -21,6 +21,8 @@ The chat uses an **agent loop**: stream a draft reply, run an LLM-backed `output
 | `erlang_backend/lib/agent_backend/tools.ex`                     | Extensible tool registry                                               |
 | `erlang_backend/lib/agent_backend/tools/output_validator.ex`    | LLM fact-checker tool                                                  |
 | `erlang_backend/lib/agent_backend/chat_sessions.ex`             | File-backed chat persistence (`priv/chat_sessions/*.json`)             |
+| `erlang_backend/lib/agent_backend/slack.ex`                     | Slack Web API client (`chat.postMessage`)                              |
+| `erlang_backend/lib/agent_backend/slack_monitor.ex`             | Async GenServer: one Slack thread per chat, error alerts               |
 | `erlang_backend/lib/agent_backend/system_prompt.ex`             | Loads `prompt.md` from repo root                                       |
 | `erlang_backend/assets/js/app.js`                               | LiveView client hooks (`RevisionCrossfade`, etc.); rebuild after edits |
 | `erlang_backend/priv/chat_sessions/`                            | Runtime chat JSON files                                                |
@@ -33,7 +35,7 @@ The chat uses an **agent loop**: stream a draft reply, run an LLM-backed `output
 
 These are in `.gitignore` and must stay local:
 
-- `.env` — API keys, `SECRET_KEY_BASE`
+- `.env` — API keys, `SECRET_KEY_BASE`, `SLACK_BOT_TOKEN`
 - `prompt.md` — personal facts and tone rules / guardrails
 - `erlang_backend/_build/`, `deps/`, `node_modules/`
 - `erlang_backend/priv/chat_sessions/` — user chat data
@@ -76,6 +78,25 @@ Requires `.env` at repo root and `prompt.md` for full functionality.
 `ChatLive` → `AgentBackend.ChatSessions` → JSON files in `priv/chat_sessions/<id>.json`
 
 On load/sync, trailing **empty assistant placeholders** (orphaned from interrupted streams) are dropped and the file is rewritten.
+
+Session JSON may also include `slack_thread_ts` (Slack thread parent timestamp) — preserved across `save/2` calls.
+
+### Slack monitoring
+
+Optional async monitoring via `AgentBackend.SlackMonitor` (supervised GenServer).
+
+- **Monitor channel** — first message in a chat posts a parent (`Chat <id> — <url>`), then all user and finalized agent replies go in that thread
+- **Errors channel** — agent `stream_error`, task timeout, and task crash (logged at source in `agent_callbacks` / `do_send_message` Task, not in LiveView handlers)
+
+Env vars (all required when enabled; missing any → no-op):
+
+| Variable                     | Purpose                          |
+| ---------------------------- | -------------------------------- |
+| `SLACK_BOT_TOKEN`            | Bot token with `chat:write`      |
+| `SLACK_MONITOR_CHANNEL_ID`   | Channel for chat threads         |
+| `SLACK_ERRORS_CHANNEL_ID`    | Channel for error alerts         |
+
+Hook points in `chat_live.ex`: `do_send_message` (user), `persist_assistant_reply` (agent), `on_error` callback + Task timeout/crash. Do not post streaming tokens or validation intermediate drafts.
 
 ### Agent loop
 
@@ -188,6 +209,7 @@ mix assets.deploy   # above + phx.digest (production)
 5. Manual: start chat from `/`, confirm URL becomes `/c/:id`, reload shows messages, idle/reconnect does not wipe UI
 6. Agent: check logs for `AgentLoop validation passed/failed`, `OutputValidator completed in Xms`
 7. Revision UX: validation fail should show held draft + "Improving accuracy…" + crossfade
+8. Slack (if configured): new chat creates monitor-channel thread; user + agent replies appear as thread messages; errors go to errors channel only
 
 ## Deployment context
 
@@ -203,7 +225,8 @@ Read before editing:
 2. `erlang_backend/lib/agent_backend/agent_loop.ex` — stream/validate/revise loop
 3. `erlang_backend/lib/agent_backend/tools/output_validator.ex` — validator prompt
 4. `erlang_backend/lib/agent_backend/chat_sessions.ex` — persistence format
-5. `erlang_backend/lib/agent_backend_web/endpoint.ex` — HTTP/WebSocket/static setup
+5. `erlang_backend/lib/agent_backend/slack_monitor.ex` — Slack thread lifecycle
+6. `erlang_backend/lib/agent_backend_web/endpoint.ex` — HTTP/WebSocket/static setup
 
 Keep changes scoped. Do not refactor unrelated modules. Do not commit secrets or personal prompt content.
 

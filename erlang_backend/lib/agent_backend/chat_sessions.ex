@@ -6,38 +6,47 @@ defmodule AgentBackend.ChatSessions do
 
   @doc "Retrieve session data for an id (or empty)"
   def get(id) when is_binary(id) do
-    case File.read(session_path(id)) do
-      {:ok, content} ->
-        case Jason.decode(content, keys: :atoms) do
-          {:ok, %{messages: messages}} when is_list(messages) -> %{messages: normalize_messages(messages)}
-          _ -> %{messages: []}
-        end
-
-      _ ->
-        %{messages: []}
+    case read_session(id) do
+      {:ok, session} -> %{messages: normalize_messages(session[:messages] || [])}
+      _ -> %{messages: []}
     end
+  end
+
+  @doc "Return stored Slack thread timestamp for a chat, if any"
+  def get_slack_thread_ts(id) when is_binary(id) do
+    case read_session(id) do
+      {:ok, session} -> session[:slack_thread_ts]
+      _ -> nil
+    end
+  end
+
+  @doc "Persist Slack thread timestamp without changing messages"
+  def put_slack_thread_ts(id, ts) when is_binary(id) and is_binary(ts) do
+    session =
+      case read_session(id) do
+        {:ok, existing} -> existing
+        _ -> %{messages: []}
+      end
+
+    write_session(id, Map.put(session, :slack_thread_ts, ts))
   end
 
   def get(_), do: %{messages: []}
 
   @doc "Save the full list of messages for a given chat id"
   def save(id, messages) when is_binary(id) and is_list(messages) do
-    File.mkdir_p!(sessions_dir())
+    session =
+      case read_session(id) do
+        {:ok, existing} -> existing
+        _ -> %{}
+      end
 
-    payload = %{
-      messages: messages,
-      updated_at: DateTime.utc_now() |> DateTime.to_iso8601()
-    }
+    payload =
+      session
+      |> Map.put(:messages, messages)
+      |> Map.put(:updated_at, DateTime.utc_now() |> DateTime.to_iso8601())
 
-    case File.write(session_path(id), Jason.encode!(payload)) do
-      :ok ->
-        :ok
-
-      {:error, reason} ->
-        require Logger
-        Logger.error("Failed to save chat session #{id}: #{inspect(reason)}")
-        {:error, reason}
-    end
+    write_session(id, payload)
   end
 
   @doc "Generate a short, shareable, url-safe id"
@@ -53,6 +62,33 @@ defmodule AgentBackend.ChatSessions do
   end
 
   defp session_path(id), do: Path.join(sessions_dir(), "#{id}.json")
+
+  defp read_session(id) do
+    case File.read(session_path(id)) do
+      {:ok, content} ->
+        case Jason.decode(content, keys: :atoms) do
+          {:ok, session} when is_map(session) -> {:ok, session}
+          _ -> :error
+        end
+
+      _ ->
+        :error
+    end
+  end
+
+  defp write_session(id, session) when is_map(session) do
+    File.mkdir_p!(sessions_dir())
+
+    case File.write(session_path(id), Jason.encode!(session)) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        require Logger
+        Logger.error("Failed to save chat session #{id}: #{inspect(reason)}")
+        {:error, reason}
+    end
+  end
 
   defp normalize_messages(messages) do
     Enum.map(messages, fn

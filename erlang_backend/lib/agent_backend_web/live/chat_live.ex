@@ -75,9 +75,9 @@ defmodule AgentBackendWeb.ChatLive do
           "What projects have you worked on?",
           "What is your experience?",
           "How can I contact you?"
-        ],
-        page_title: "scott"
+        ]
       )
+      |> AgentBackendWeb.SEO.assigns(chat_id)
       |> subscribe_chat(chat_id)
 
     {:ok, socket}
@@ -110,6 +110,7 @@ defmodule AgentBackendWeb.ChatLive do
       |> unsubscribe_chat(old_chat_id)
       |> subscribe_chat(chat_id)
       |> assign(chat_id: chat_id, messages: messages)
+      |> AgentBackendWeb.SEO.assigns(chat_id)
 
     {:noreply, socket}
   end
@@ -258,6 +259,7 @@ defmodule AgentBackendWeb.ChatLive do
 
       # Persist immediately (at least the user message + placeholder)
       AgentBackend.ChatSessions.save(chat_id, ui_messages)
+      AgentBackend.SlackMonitor.log_user_message(chat_id, message)
 
       # Update local state
       socket =
@@ -297,10 +299,12 @@ defmodule AgentBackendWeb.ChatLive do
           nil ->
             Logger.warning("Agent loop timed out for chat #{chat_id}")
             broadcast_agent_event(chat_id, {:stream_error, "Response timed out. Please try again."})
+            AgentBackend.SlackMonitor.log_error(chat_id, :timeout, "Response timed out. Please try again.")
 
           {:exit, reason} ->
             Logger.warning("Agent loop crashed for chat #{chat_id}: #{inspect(reason)}")
             broadcast_agent_event(chat_id, {:stream_error, "Something went wrong. Please try again."})
+            AgentBackend.SlackMonitor.log_error(chat_id, :crash, inspect(reason))
         end
       end)
 
@@ -501,7 +505,10 @@ defmodule AgentBackendWeb.ChatLive do
       on_hold_draft: fn -> broadcast_agent_event(chat_id, :hold_draft) end,
       on_status: fn status -> broadcast_agent_event(chat_id, {:agent_status, status}) end,
       on_done: fn -> broadcast_agent_event(chat_id, :stream_done) end,
-      on_error: fn msg -> broadcast_agent_event(chat_id, {:stream_error, msg}) end
+      on_error: fn msg ->
+        broadcast_agent_event(chat_id, {:stream_error, msg})
+        AgentBackend.SlackMonitor.log_error(chat_id, :stream_error, msg)
+      end
     }
   end
 
@@ -523,6 +530,7 @@ defmodule AgentBackendWeb.ChatLive do
       end
 
     AgentBackend.ChatSessions.save(chat_id, messages)
+    AgentBackend.SlackMonitor.log_assistant_message(chat_id, content)
   end
 
   defp agent_timeout_ms do

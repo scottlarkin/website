@@ -10,6 +10,7 @@ Live at [scott.larkin.cc](https://scott.larkin.cc)
 - Shareable chat URLs (`/c/:id`) with JSON file persistence
 - System prompt loaded from `prompt.md` at the repo root
 - LLM integration with server-side SSE streaming
+- Optional Slack monitoring — one thread per chat, separate error channel
 - Dark, minimal chat UI (Tailwind CSS)
 
 ## Requirements
@@ -65,6 +66,9 @@ Runs on port **3000**. Mounts `erlang_backend/` and expects `OPENROUTER_KEY` and
 | `LIVE_VIEW_SALT`   | LiveView session signing (`mix phx.gen.secret`) |
 | `PHX_HOST`         | Public hostname for URL generation             |
 | `SYSTEM_PROMPT`    | Fallback prompt if `prompt.md` is missing      |
+| `SLACK_BOT_TOKEN`  | Slack bot token for chat monitoring (optional) |
+| `SLACK_MONITOR_CHANNEL_ID` | Slack channel for per-chat threads (optional) |
+| `SLACK_ERRORS_CHANNEL_ID`  | Slack channel for error alerts (optional)     |
 
 **System prompt:** `prompt.md` at the repo root is the primary source. It is gitignored because it contains personal facts and tone instructions. See `AgentBackend.SystemPrompt` for load order.
 
@@ -79,6 +83,8 @@ website/
     ├── lib/
     │   ├── agent_backend/          # Domain logic
     │   │   ├── chat_sessions.ex    # JSON file chat persistence
+    │   │   ├── slack.ex            # Slack Web API client
+    │   │   ├── slack_monitor.ex    # Per-chat Slack threads + error alerts
     │   │   └── system_prompt.ex    # Loads prompt.md
     │   └── agent_backend_web/      # Phoenix web layer
     │       ├── live/chat_live.ex   # Main chat UI + LLM streaming
@@ -102,6 +108,12 @@ website/
 3. On the first message, the URL patches to `/c/:id` via `push_patch` (no full page reload).
 4. A background `Task` streams tokens from OpenRouter; partial responses are saved as they arrive.
 5. Assistant replies are rendered as Markdown (Earmark).
+
+## Slack monitoring (optional)
+
+Set `SLACK_BOT_TOKEN`, `SLACK_MONITOR_CHANNEL_ID`, and `SLACK_ERRORS_CHANNEL_ID` in `.env`. The bot needs the `chat:write` scope and must be invited to both channels.
+
+Each chat opens a thread in the monitor channel; user and agent messages are posted as replies. Agent errors (timeouts, crashes, stream failures) post to the errors channel. If any Slack var is unset, monitoring is skipped silently.
 
 ## Health check
 

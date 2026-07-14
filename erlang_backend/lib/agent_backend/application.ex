@@ -5,6 +5,7 @@ defmodule AgentBackend.Application do
   def start(_type, _args) do
     children = [
       {Phoenix.PubSub, name: AgentBackend.PubSub},
+      AgentBackend.SlackMonitor,
       AgentBackendWeb.Endpoint
     ]
 
