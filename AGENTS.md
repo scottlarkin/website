@@ -8,18 +8,26 @@ Personal portfolio chat site: Phoenix LiveView frontend, Elixir backend, OpenRou
 
 Despite the directory name, **all app code is Elixir** under `erlang_backend/`.
 
+The chat uses an **agent loop**: stream a draft reply, run an LLM-backed `output_validator`, optionally revise, then finalize. Validation is **pure LLM** (no deterministic string-matching checks).
+
 ## Repository layout
 
-| Path                                                     | Role                                                         |
-| -------------------------------------------------------- | ------------------------------------------------------------ |
-| `erlang_backend/lib/agent_backend_web/live/chat_live.ex` | Chat UI, message handling, LLM streaming, URL routing        |
-| `erlang_backend/lib/agent_backend/chat_sessions.ex`      | File-backed chat persistence (`priv/chat_sessions/*.json`)   |
-| `erlang_backend/lib/agent_backend/system_prompt.ex`      | Loads `prompt.md` from repo root                             |
-| `erlang_backend/assets/js/app.js`                        | LiveView client hooks; rebuild after edits                   |
-| `erlang_backend/priv/chat_sessions/`                     | Runtime chat JSON files                                      |
-| `erlang_backend/priv/static/`                            | Served static assets (built output)                          |
-| `prompt.md`                                              | System prompt (gitignored, personal)                         |
-| `.env`                                                   | Secrets (gitignored)                                         |
+| Path                                                            | Role                                                                   |
+| --------------------------------------------------------------- | ---------------------------------------------------------------------- |
+| `erlang_backend/lib/agent_backend_web/live/chat_live.ex`        | Chat UI, agent task spawn, PubSub stream events, URL routing           |
+| `erlang_backend/lib/agent_backend_web/live/chat_live.html.heex` | Message rendering, held-draft revision UX                              |
+| `erlang_backend/lib/agent_backend/agent_loop.ex`                | Stream → validate → revise loop                                        |
+| `erlang_backend/lib/agent_backend/open_router.ex`               | OpenRouter streaming + non-streaming client                            |
+| `erlang_backend/lib/agent_backend/tools.ex`                     | Extensible tool registry                                               |
+| `erlang_backend/lib/agent_backend/tools/output_validator.ex`    | LLM fact-checker tool                                                  |
+| `erlang_backend/lib/agent_backend/chat_sessions.ex`             | File-backed chat persistence (`priv/chat_sessions/*.json`)             |
+| `erlang_backend/lib/agent_backend/system_prompt.ex`             | Loads `prompt.md` from repo root                                       |
+| `erlang_backend/assets/js/app.js`                               | LiveView client hooks (`RevisionCrossfade`, etc.); rebuild after edits |
+| `erlang_backend/priv/chat_sessions/`                            | Runtime chat JSON files                                                |
+| `erlang_backend/priv/static/`                                   | Served static assets (built output)                                    |
+| `erlang_backend/priv/static/images/favicon.svg`                 | Favicon source (served under `/images/…` after digest)                 |
+| `prompt.md`                                                     | System prompt (gitignored, personal)                                   |
+| `.env`                                                          | Secrets (gitignored)                                                   |
 
 ## Do not commit
 
@@ -30,7 +38,28 @@ These are in `.gitignore` and must stay local:
 - `erlang_backend/_build/`, `deps/`, `node_modules/`
 - `erlang_backend/priv/chat_sessions/` — user chat data
 - `erlang_backend/priv/static/assets/` — built JS/CSS
+
 ## Running locally
+
+```bash
+# systemd user service (auto-restart, runs assets.deploy on start)
+systemctl --user restart agent-backend.service
+
+# Or manually:
+./erlang_backend/scripts/server.sh
+```
+
+`server.sh` sources `../../.env` and runs `mix assets.deploy` before `mix phx.server`.
+
+**Dev/test server** (port **3001**, leaves prod untouched):
+
+```bash
+./erlang_backend/scripts/dev-server.sh
+# DEV_PORT=3002 ./scripts/dev-server.sh  # alternate port
+# ./scripts/dev-server.sh --build        # rebuild assets first
+```
+
+**One-off compile + run** (defaults to port 3000):
 
 ```bash
 cd erlang_backend
@@ -38,15 +67,46 @@ mix deps.get && mix compile
 mix phx.server
 ```
 
-Server listens on **port 3000**. Requires `.env` at repo root and `prompt.md` for full functionality.
-
-Production on this host uses `erlang_backend/scripts/server.sh`, which sources `../../.env`.
+Requires `.env` at repo root and `prompt.md` for full functionality.
 
 ## Key architectural facts
 
 ### Chat persistence
 
 `ChatLive` → `AgentBackend.ChatSessions` → JSON files in `priv/chat_sessions/<id>.json`
+
+On load/sync, trailing **empty assistant placeholders** (orphaned from interrupted streams) are dropped and the file is rewritten.
+
+### Agent loop
+
+`ChatLive.do_send_message/2` spawns a background task that runs `AgentBackend.AgentLoop.run/3`.
+
+Flow per user message:
+
+1. **Stream draft** — OpenRouter SSE without tools in the request (Nemotron free does not stream reliably with tools). Falls back to non-streaming `complete/2` if the stream is empty.
+2. **Validate** — `output_validator` runs via `auto_validate/6` (not model tool_calls). Shows "Checking accuracy…" in the UI.
+3. **Revise** (if validation fails and retries remain) — holds dimmed draft (`held_draft`), streams a corrected reply with validation feedback. Shows "Improving accuracy…".
+4. **Done** — `on_done` clears loading state.
+
+Env tuning (all optional):
+
+| Variable                       | Default                                  | Purpose                         |
+| ------------------------------ | ---------------------------------------- | ------------------------------- |
+| `OPENROUTER_MODEL`             | `nvidia/nemotron-3-ultra-550b-a55b:free` | Main chat model                 |
+| `OPENROUTER_VALIDATOR_MODEL`   | same as main                             | Validator-only model override   |
+| `AGENT_MAX_ITERS`              | `5`                                      | Max agent loop iterations       |
+| `AGENT_MAX_VALIDATION_RETRIES` | `2`                                      | Max validation-driven revisions |
+| `AGENT_TIMEOUT_MS`             | `180000`                                 | Background task timeout         |
+
+Validator returns compact JSON (`{"passed": true}` or `{"passed": false, "issues": [...]}`). Unparseable validator responses and API errors **default to pass** (lenient) to avoid revision spam.
+
+The task also **persists the final assistant reply to disk** when the loop completes, so reloads/reconnects still get the answer even if the originating LiveView died.
+
+### Stream events (PubSub)
+
+Agent callbacks broadcast to `chat:<id>` as `{:agent_event, event}` — not direct `send` to the LiveView pid. Any subscribed `ChatLive` for that chat receives tokens, status, done, and errors. This survives WebSocket reconnect and page reload.
+
+`broadcast_chat_sync/4` separately syncs multi-tab UI state via `{:chat_sync, ...}`.
 
 ### LiveView URL sync
 
@@ -57,8 +117,15 @@ When a new chat starts from `/`, the server uses `push_patch(to: "/c/#{id}", rep
 ### LLM streaming
 
 - Browser ↔ server: LiveView WebSocket (`phx-submit="send_message"`)
-- Server ↔ OpenRouter: HTTP SSE via `Req.post!` in a `Task.start` spawned from `do_send_message/2`
-- Tokens arrive as `handle_info({:stream_token, ...})`; do not use `push_navigate` mid-stream (kills UX). `push_patch` is safe; `push_navigate` remounts.
+- Server ↔ OpenRouter: HTTP SSE via `Req.post` in a `Task` spawned from `do_send_message/2`
+- Tokens arrive as `handle_info({:agent_event, {:stream_token, token}})`; do not use `push_navigate` mid-stream (kills UX). `push_patch` is safe; `push_navigate` remounts.
+- Only the **last** assistant message renders raw text during `:generating`; earlier messages stay Markdown.
+
+### Revision UX
+
+- `held_draft` — dimmed previous draft while revising
+- `RevisionCrossfade` JS hook — crossfade when revision stream starts
+- Template shows Markdown when not actively generating the last message
 
 ### System prompt
 
@@ -68,6 +135,10 @@ Loaded from `prompt.md` at repo root (searched relative to cwd and `lib/`). Fall
 
 `endpoint.ex` passes `session: @session_options` to the LiveView socket `connect_info`. Keep session options in sync between `Plug.Session` and the socket.
 
+### Static files
+
+`Plug.Static` `only` list allows directory prefixes (`assets`, `images`, etc.). **Do not serve digested root-level files** like `favicon-<hash>.svg` — `only: ~w(favicon.svg)` won't match hashed names. Favicon lives at `priv/static/images/favicon.svg`; layout uses `static_path("/images/favicon.svg")`.
+
 ## Making changes
 
 ### Elixir / LiveView
@@ -75,6 +146,7 @@ Loaded from `prompt.md` at repo root (searched relative to cwd and `lib/`). Fall
 - Match existing style in `chat_live.ex` — minimal comments, focused diffs
 - Use `push_patch` / `push_navigate` from Phoenix LiveView, not deprecated `live_patch`
 - Verified routes (`~p"/..."`) require `use Phoenix.VerifiedRoutes` — this project often uses plain string paths instead
+- To add a tool: implement `AgentBackend.Tools.Behaviour`, register in `AgentBackend.Tools` `@tools` list
 
 ### Frontend
 
@@ -93,26 +165,33 @@ mix assets.deploy   # above + phx.digest (production)
 
 - App config: `erlang_backend/config/config.exs` (port 3000, esbuild paths)
 - Env-specific: `dev.exs`, `prod.exs`, `runtime.exs`
+- `PORT` env overrides listen port (`runtime.exs`); dev-server defaults to 3001
 
 ## Common pitfalls
 
-| Mistake                                                            | Why it breaks                                            |
-| ------------------------------------------------------------------ | -------------------------------------------------------- |
-| Editing `priv/static/assets/app.js` directly                       | Overwritten on next asset build; edit `assets/js/app.js` |
-| Running `docker compile` as root without fixing `_build` ownership | Leaves root-owned files; breaks local `mix compile`      |
-| Using `push_navigate` for first-message URL update                 | Remounts LiveView and disrupts streaming                 |
+| Mistake                                                            | Why it breaks                                                            |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------ |
+| Editing `priv/static/assets/app.js` directly                       | Overwritten on next asset build; edit `assets/js/app.js`                 |
+| Favicon at repo root of `priv/static/` with digest                 | Digested `favicon-<hash>.svg` 404s — use `images/favicon.svg`            |
+| Sending stream events only to `self()` pid                         | Lost on reload/reconnect; use PubSub `broadcast_agent_event/2`           |
+| `stream_in_progress?` on empty assistant placeholder               | Stuck "Thinking…" after orphaned streams                                 |
+| Using `push_navigate` for first-message URL update                 | Remounts LiveView and disrupts streaming                                 |
+| Running `docker compile` as root without fixing `_build` ownership | Leaves root-owned files; breaks local `mix compile`                      |
+| Adding deterministic validation rules                              | User wants pure LLM validator; prompt changes must not fight code checks |
 
 ## Testing changes
 
 1. `mix compile` in `erlang_backend/`
 2. Rebuild assets if JS/CSS changed
-3. Restart server (`scripts/server.sh` or `mix phx.server`)
-4. Verify: `curl http://localhost:3000/health`
+3. Dev: `./scripts/dev-server.sh` (3001). Prod: `systemctl --user restart agent-backend.service` (3000)
+4. Verify: `curl http://localhost:3001/health` (dev) or `:3000/health` (prod)
 5. Manual: start chat from `/`, confirm URL becomes `/c/:id`, reload shows messages, idle/reconnect does not wipe UI
+6. Agent: check logs for `AgentLoop validation passed/failed`, `OutputValidator completed in Xms`
+7. Revision UX: validation fail should show held draft + "Improving accuracy…" + crossfade
 
 ## Deployment context
 
-- Hosted on a home server, exposed via **Cloudflare Tunnel** to `scott.larkin.cc`
+- Prod: `agent-backend.service` (user systemd) runs `scripts/server.sh` on port 3000
 - No reverse-proxy config in this repo; tunnel handles TLS and routing
 - WebSocket idle timeouts on proxies make correct LiveView URL sync important
 
@@ -121,8 +200,10 @@ mix assets.deploy   # above + phx.digest (production)
 Read before editing:
 
 1. `erlang_backend/lib/agent_backend_web/live/chat_live.ex` — main behavior
-2. `erlang_backend/lib/agent_backend/chat_sessions.ex` — persistence format
-3. `erlang_backend/lib/agent_backend_web/endpoint.ex` — HTTP/WebSocket setup
+2. `erlang_backend/lib/agent_backend/agent_loop.ex` — stream/validate/revise loop
+3. `erlang_backend/lib/agent_backend/tools/output_validator.ex` — validator prompt
+4. `erlang_backend/lib/agent_backend/chat_sessions.ex` — persistence format
+5. `erlang_backend/lib/agent_backend_web/endpoint.ex` — HTTP/WebSocket/static setup
 
 Keep changes scoped. Do not refactor unrelated modules. Do not commit secrets or personal prompt content.
 

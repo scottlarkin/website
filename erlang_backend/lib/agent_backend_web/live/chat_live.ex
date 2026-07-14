@@ -66,6 +66,8 @@ defmodule AgentBackendWeb.ChatLive do
         messages: messages,
         input: "",
         is_loading: false,
+        agent_status: nil,
+        held_draft: nil,
         chat_id: chat_id,
         suggestions: [
           "What are your technical skills?",
@@ -115,23 +117,30 @@ defmodule AgentBackendWeb.ChatLive do
   defp load_chat_messages(nil), do: []
 
   defp load_chat_messages(chat_id) when is_binary(chat_id) do
-    AgentBackend.ChatSessions.get(chat_id) |> Map.get(:messages, [])
+    raw = AgentBackend.ChatSessions.get(chat_id) |> Map.get(:messages, [])
+    cleaned = drop_orphaned_assistant_placeholder(raw)
+
+    if cleaned != raw do
+      AgentBackend.ChatSessions.save(chat_id, cleaned)
+    end
+
+    cleaned
+  end
+
+  defp drop_orphaned_assistant_placeholder(messages) do
+    case List.last(messages) do
+      %{role: "assistant", content: content} when content in [nil, ""] ->
+        Enum.drop(messages, -1)
+
+      _ ->
+        messages
+    end
   end
 
   defp load_sync_state(nil), do: {[], false}
 
   defp load_sync_state(chat_id) when is_binary(chat_id) do
-    messages = load_chat_messages(chat_id)
-    {messages, stream_in_progress?(messages)}
-  end
-
-  defp stream_in_progress?([]), do: false
-
-  defp stream_in_progress?(messages) do
-    case List.last(messages) do
-      %{role: "assistant", content: ""} -> true
-      _ -> false
-    end
+    {load_chat_messages(chat_id), false}
   end
 
   defp chat_topic(chat_id) when is_binary(chat_id), do: "chat:#{chat_id}"
@@ -156,13 +165,22 @@ defmodule AgentBackendWeb.ChatLive do
     socket
   end
 
-  defp broadcast_chat_sync(socket, messages, is_loading) do
+  defp broadcast_chat_sync(socket, messages, is_loading, agent_status \\ :skip, held_draft \\ :skip) do
+    agent_status = if agent_status == :skip, do: socket.assigns[:agent_status], else: agent_status
+    held_draft = if held_draft == :skip, do: socket.assigns[:held_draft], else: held_draft
+
     if chat_id = socket.assigns.chat_id do
       Phoenix.PubSub.broadcast_from(
         AgentBackend.PubSub,
         self(),
         chat_topic(chat_id),
-        {:chat_sync, %{messages: messages, is_loading: is_loading}}
+        {:chat_sync,
+         %{
+           messages: messages,
+           is_loading: is_loading,
+           agent_status: agent_status,
+           held_draft: held_draft
+         }}
       )
     end
 
@@ -173,7 +191,7 @@ defmodule AgentBackendWeb.ChatLive do
   def handle_event("new_chat", _params, socket) do
     {:noreply,
      socket
-     |> assign(messages: [], input: "", chat_id: nil, is_loading: false)
+     |> assign(messages: [], input: "", chat_id: nil, is_loading: false, agent_status: nil, held_draft: nil)
      |> Phoenix.LiveView.push_navigate(to: "/")}
   end
 
@@ -207,7 +225,8 @@ defmodule AgentBackendWeb.ChatLive do
 
     {messages, is_loading} = load_sync_state(socket.assigns.chat_id)
 
-    {:noreply, assign(socket, messages: messages, is_loading: is_loading, input: "")}
+    {:noreply,
+     assign(socket, messages: messages, is_loading: is_loading, agent_status: nil, held_draft: nil, input: "")}
   end
 
   defp do_send_message(raw_message, socket) do
@@ -245,8 +264,8 @@ defmodule AgentBackendWeb.ChatLive do
         socket
         |> unsubscribe_chat(old_chat_id)
         |> subscribe_chat(chat_id)
-        |> assign(messages: ui_messages, is_loading: true, input: "", chat_id: chat_id)
-        |> broadcast_chat_sync(ui_messages, true)
+        |> assign(messages: ui_messages, is_loading: true, agent_status: :generating, held_draft: nil, input: "", chat_id: chat_id)
+        |> broadcast_chat_sync(ui_messages, true, :generating)
 
       # First message: sync URL to /c/:id without remounting (push_patch, not push_navigate).
       socket =
@@ -256,13 +275,33 @@ defmodule AgentBackendWeb.ChatLive do
           socket
         end
 
-      lv_pid = self()
-
       Task.start(fn ->
         system_prompt = AgentBackend.SystemPrompt.load()
         require Logger
-        Logger.info("Starting LLM stream for: #{inspect(message)} (id=#{chat_id})")
-        stream_llm(user_messages, system_prompt, lv_pid)
+        Logger.info("Starting agent loop for: #{inspect(message)} (id=#{chat_id})")
+
+        callbacks = agent_callbacks(chat_id)
+
+        task =
+          Task.async(fn ->
+            AgentBackend.AgentLoop.run(user_messages, system_prompt, callbacks)
+          end)
+
+        case Task.yield(task, agent_timeout_ms()) || Task.shutdown(task, :brutal_kill) do
+          {:ok, content} when is_binary(content) and content != "" ->
+            persist_assistant_reply(chat_id, content)
+
+          {:ok, _} ->
+            :ok
+
+          nil ->
+            Logger.warning("Agent loop timed out for chat #{chat_id}")
+            broadcast_agent_event(chat_id, {:stream_error, "Response timed out. Please try again."})
+
+          {:exit, reason} ->
+            Logger.warning("Agent loop crashed for chat #{chat_id}: #{inspect(reason)}")
+            broadcast_agent_event(chat_id, {:stream_error, "Something went wrong. Please try again."})
+        end
       end)
 
       {:noreply, socket}
@@ -270,8 +309,13 @@ defmodule AgentBackendWeb.ChatLive do
   end
 
   @impl true
-  def handle_info({:stream_token, token}, socket) do
-    messages = socket.assigns.messages
+  def handle_info({:agent_event, event}, socket), do: handle_agent_event(event, socket)
+
+  @impl true
+  def handle_info({:stream_token, token}, socket), do: handle_agent_event({:stream_token, token}, socket)
+
+  defp handle_agent_event({:stream_token, token}, socket) do
+    {socket, messages} = maybe_start_revision_stream(socket)
 
     if messages != [] do
       last_idx = length(messages) - 1
@@ -282,6 +326,56 @@ defmodule AgentBackendWeb.ChatLive do
         messages = List.replace_at(messages, last_idx, updated)
 
         # Persist partial state so reload during streaming keeps progress
+        if chat_id = socket.assigns.chat_id do
+          AgentBackend.ChatSessions.save(chat_id, messages)
+        end
+
+        socket =
+          socket
+          |> assign(messages: messages)
+          |> broadcast_chat_sync(messages, true, :skip, :skip)
+
+        {:noreply, socket}
+      else
+        {:noreply, socket}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_info(:hold_draft, socket), do: handle_agent_event(:hold_draft, socket)
+
+  defp handle_agent_event(:hold_draft, socket) do
+    held_draft =
+      case List.last(socket.assigns.messages) do
+        %{role: "assistant", content: content} when is_binary(content) and content != "" -> content
+        _ -> nil
+      end
+
+    socket =
+      socket
+      |> assign(held_draft: held_draft, agent_status: :revising)
+      |> broadcast_chat_sync(socket.assigns.messages, true, :revising, held_draft)
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info(:stream_reset, socket), do: handle_agent_event(:stream_reset, socket)
+
+  defp handle_agent_event(:stream_reset, socket) do
+    messages = socket.assigns.messages
+
+    if messages != [] do
+      last_idx = length(messages) - 1
+      last = List.last(messages)
+
+      if last && last.role == "assistant" do
+        updated = %{last | content: ""}
+        messages = List.replace_at(messages, last_idx, updated)
+
         if chat_id = socket.assigns.chat_id do
           AgentBackend.ChatSessions.save(chat_id, messages)
         end
@@ -301,7 +395,21 @@ defmodule AgentBackendWeb.ChatLive do
   end
 
   @impl true
-  def handle_info(:stream_done, socket) do
+  def handle_info({:agent_status, status}, socket), do: handle_agent_event({:agent_status, status}, socket)
+
+  defp handle_agent_event({:agent_status, status}, socket) do
+    socket =
+      socket
+      |> assign(agent_status: status)
+      |> broadcast_chat_sync(socket.assigns.messages, true, status, :skip)
+
+    {:noreply, socket}
+  end
+
+  @impl true
+  def handle_info(:stream_done, socket), do: handle_agent_event(:stream_done, socket)
+
+  defp handle_agent_event(:stream_done, socket) do
     # Ensure the final state is saved
     if chat_id = socket.assigns.chat_id do
       AgentBackend.ChatSessions.save(chat_id, socket.assigns.messages)
@@ -309,14 +417,16 @@ defmodule AgentBackendWeb.ChatLive do
 
     socket =
       socket
-      |> assign(is_loading: false)
-      |> broadcast_chat_sync(socket.assigns.messages, false)
+      |> assign(is_loading: false, agent_status: nil, held_draft: nil)
+      |> broadcast_chat_sync(socket.assigns.messages, false, nil, nil)
 
     {:noreply, socket}
   end
 
   @impl true
-  def handle_info({:stream_error, error_msg}, socket) do
+  def handle_info({:stream_error, error_msg}, socket), do: handle_agent_event({:stream_error, error_msg}, socket)
+
+  defp handle_agent_event({:stream_error, error_msg}, socket) do
     messages = socket.assigns.messages
 
     if messages != [] do
@@ -333,8 +443,8 @@ defmodule AgentBackendWeb.ChatLive do
 
         socket =
           socket
-          |> assign(messages: messages, is_loading: false)
-          |> broadcast_chat_sync(messages, false)
+          |> assign(messages: messages, is_loading: false, agent_status: nil, held_draft: nil)
+          |> broadcast_chat_sync(messages, false, nil, nil)
 
         {:noreply, socket}
       else
@@ -346,112 +456,87 @@ defmodule AgentBackendWeb.ChatLive do
   end
 
   @impl true
-  def handle_info({:chat_sync, %{messages: messages, is_loading: is_loading}}, socket) do
-    {:noreply, assign(socket, messages: messages, is_loading: is_loading)}
+  def handle_info({:chat_sync, %{messages: messages, is_loading: is_loading} = payload}, socket) do
+    {:noreply,
+     assign(socket,
+       messages: messages,
+       is_loading: is_loading,
+       agent_status: Map.get(payload, :agent_status),
+       held_draft: Map.get(payload, :held_draft)
+     )}
   end
 
-  # --- LLM Integration using OpenRouter (streaming) ---
+  defp maybe_start_revision_stream(socket) do
+    if socket.assigns[:held_draft] do
+      messages = clear_last_assistant_content(socket.assigns.messages)
 
-  defp stream_llm(history, system_prompt, lv_pid) do
-    api_key = System.get_env("OPENROUTER_KEY")
-    model = System.get_env("OPENROUTER_MODEL", "openai/gpt-4o-mini")
+      socket =
+        socket
+        |> assign(messages: messages, held_draft: nil)
+        |> broadcast_chat_sync(messages, true, :skip, nil)
 
-    if is_nil(api_key) or api_key == "" do
-      send(lv_pid, {:stream_error, "Error: OPENROUTER_KEY not set in environment."})
-      send(lv_pid, :stream_done)
+      {socket, messages}
     else
-      messages = build_openrouter_messages(history, system_prompt)
-
-      body = %{
-        model: model,
-        messages: messages,
-        stream: true,
-        temperature: 0.4
-      }
-
-      try do
-        resp =
-          Req.post!("https://openrouter.ai/api/v1/chat/completions",
-            headers: [
-              {"Authorization", "Bearer #{api_key}"},
-              {"HTTP-Referer", "http://localhost:3000"},
-              {"X-Title", "Personal Agent"}
-            ],
-            json: body,
-            into: :self,
-            receive_timeout: 300_000
-          )
-
-        # Consume using the recommended receive + parse_message loop for SSE
-        consume = fn consume ->
-          case Req.parse_message(resp, receive do m -> m end) do
-            {:ok, [{:data, data}]} ->
-              send_stream_tokens(data, lv_pid)
-              consume.(consume)
-            {:ok, [:done]} ->
-              send(lv_pid, :stream_done)
-            {:ok, _other} ->
-              consume.(consume)
-            {:error, reason} ->
-              send(lv_pid, {:stream_error, "stream parse error: #{inspect(reason)}"})
-          end
-        end
-        consume.(consume)
-      rescue
-        e ->
-          send(lv_pid, {:stream_error, "LLM stream failed: #{Exception.message(e)}"})
-          send(lv_pid, :stream_done)
-      end
+      {socket, socket.assigns.messages}
     end
   end
 
-  defp send_stream_tokens(data, lv_pid) do
-    data
-    |> String.split("\n")
-    |> Enum.each(fn line ->
-      line = String.trim(line)
+  defp clear_last_assistant_content([]), do: []
 
-      cond do
-        String.starts_with?(line, "data: [DONE]") ->
-          send(lv_pid, :stream_done)
+  defp clear_last_assistant_content(messages) do
+    last_idx = length(messages) - 1
+    last = List.last(messages)
 
-        String.starts_with?(line, "data: ") ->
-          json_str = String.trim_leading(line, "data: ") |> String.trim()
+    if last && last.role == "assistant" do
+      List.replace_at(messages, last_idx, %{last | content: ""})
+    else
+      messages
+    end
+  end
 
-          if json_str != "" and json_str != "[DONE]" do
-            case Jason.decode(json_str) do
-              {:ok, %{"choices" => [%{"delta" => delta} | _]}} ->
-                if content = delta["content"] do
-                  if is_binary(content) and content != "" do
-                    send(lv_pid, {:stream_token, content})
-                  end
-                end
+  defp agent_callbacks(chat_id) do
+    %{
+      on_token: fn token -> broadcast_agent_event(chat_id, {:stream_token, token}) end,
+      on_reset: fn -> broadcast_agent_event(chat_id, :stream_reset) end,
+      on_hold_draft: fn -> broadcast_agent_event(chat_id, :hold_draft) end,
+      on_status: fn status -> broadcast_agent_event(chat_id, {:agent_status, status}) end,
+      on_done: fn -> broadcast_agent_event(chat_id, :stream_done) end,
+      on_error: fn msg -> broadcast_agent_event(chat_id, {:stream_error, msg}) end
+    }
+  end
 
-              {:ok, %{"error" => error}} ->
-                send(lv_pid, {:stream_error, "LLM Error: #{inspect(error)}"})
-                send(lv_pid, :stream_done)
+  defp broadcast_agent_event(chat_id, event) when is_binary(chat_id) do
+    Phoenix.PubSub.broadcast(AgentBackend.PubSub, chat_topic(chat_id), {:agent_event, event})
+  end
 
-              _ ->
-                :ok
-            end
-          end
+  defp persist_assistant_reply(chat_id, content) when is_binary(chat_id) and is_binary(content) do
+    messages = AgentBackend.ChatSessions.get(chat_id) |> Map.get(:messages, [])
+    now = DateTime.utc_now() |> DateTime.to_iso8601()
 
-        true ->
-          :ok
+    messages =
+      case List.last(messages) do
+        %{role: "assistant"} = last ->
+          List.replace_at(messages, length(messages) - 1, %{last | content: content, timestamp: now})
+
+        _ ->
+          messages ++ [%{role: "assistant", content: content, timestamp: now}]
       end
-    end)
+
+    AgentBackend.ChatSessions.save(chat_id, messages)
   end
 
-  defp build_openrouter_messages(history, system_prompt) do
-    sys = [%{role: "system", content: system_prompt}]
-
-    hist =
-      Enum.map(history, fn msg ->
-        %{role: msg.role, content: msg.content}
-      end)
-
-    sys ++ hist
+  defp agent_timeout_ms do
+    case Integer.parse(System.get_env("AGENT_TIMEOUT_MS", "180000")) do
+      {n, _} when n > 0 -> n
+      _ -> 180_000
+    end
   end
+
+  def agent_status_label(nil), do: nil
+  def agent_status_label(:generating), do: nil
+  def agent_status_label(:revising), do: "Improving accuracy…"
+  def agent_status_label(label) when is_binary(label), do: label
+  def agent_status_label(_), do: nil
 
   # Render assistant content as nice Markdown (with basic sanitization fallback)
   defp render_markdown(nil), do: ""

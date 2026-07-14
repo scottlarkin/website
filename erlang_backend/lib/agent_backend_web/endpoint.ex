@@ -29,7 +29,7 @@ defmodule AgentBackendWeb.Endpoint do
     from: :agent_backend,
     gzip: true,
     cache: :static,
-    only: ~w(assets css fonts images js favicon.ico favicon.svg robots.txt)
+    only: ~w(assets css fonts images js robots.txt)
 
   plug AgentBackendWeb.Router
 end

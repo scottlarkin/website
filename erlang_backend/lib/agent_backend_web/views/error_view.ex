@@ -21,7 +21,7 @@ defmodule AgentBackendWeb.ErrorView do
   end
 
   def render("404.html", assigns) do
-    message = assigns[:message] || "Not found"
+    assigns = Map.put(assigns, :message, assigns[:message] || "Not found")
     ~H"""
     <div class="min-h-screen flex items-center justify-center bg-gray-900 text-white p-4">
       <div class="max-w-md mx-auto text-center">

@@ -55,6 +55,26 @@ let Hooks = {
     }
   },
 
+  RevisionCrossfade: {
+    mounted() {
+      this.hadHeldDraft = !!this.el.querySelector("[data-held-draft]")
+    },
+    updated() {
+      const held = this.el.querySelector("[data-held-draft]")
+      const live = this.el.querySelector("[data-live-content]")
+
+      if (this.hadHeldDraft && !held && live) {
+        live.style.opacity = "0"
+        requestAnimationFrame(() => {
+          live.style.transition = "opacity 200ms ease-out"
+          live.style.opacity = "1"
+        })
+      }
+
+      this.hadHeldDraft = !!held
+    }
+  },
+
   ChatForm: {
     mounted() {
       this.watchdog = null

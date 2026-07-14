@@ -52,26 +52,43 @@
                 "bg-zinc-900 border border-zinc-800 text-zinc-200"
               end}>
               <%= if message.role == "assistant" do %>
-                <%= if message.content == "" do %>
-                  <div class="flex items-center gap-1.5 text-zinc-400">
-                    Thinking
-                    <span class="inline-flex items-center gap-px">
-                      <span class="inline-block w-1 h-1 bg-current rounded-full animate-bounce [animation-delay:-0.2s]"></span>
-                      <span class="inline-block w-1 h-1 bg-current rounded-full animate-bounce [animation-delay:-0.1s]"></span>
-                      <span class="inline-block w-1 h-1 bg-current rounded-full animate-bounce"></span>
-                    </span>
-                  </div>
-                <% else %>
-                  <%= if @is_loading do %>
-                    <%!-- Show raw accumulating text during streaming for clean token-by-token appearance --%>
-                    <div class="whitespace-pre-wrap"><%= message.content %></div>
-                  <% else %>
-                    <%!-- Nice rendered markdown once the response is complete --%>
-                    <div class="prose prose-invert prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-pre:my-2 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:bg-zinc-800 prose-code:before:content-[''] prose-code:after:content-['']">
-                      <%= render_markdown(message.content) %>
+                <div id={"assistant-body-#{idx}"} phx-hook="RevisionCrossfade" class="relative">
+                  <%= if idx == length(@messages) - 1 and @held_draft do %>
+                    <div
+                      data-held-draft
+                      class="prose prose-invert prose-sm max-w-none opacity-50 transition-opacity duration-300 prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-pre:my-2 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:bg-zinc-800 prose-code:before:content-[''] prose-code:after:content-['']"
+                    >
+                      <%= render_markdown(@held_draft) %>
                     </div>
+                    <p class="mt-2 text-xs text-zinc-500 animate-pulse"><%= agent_status_label(:revising) %></p>
+                  <% else %>
+                    <%= if message.content == "" and idx == length(@messages) - 1 and @is_loading do %>
+                      <%= if agent_status_label(@agent_status) do %>
+                        <p class="text-sm text-zinc-400"><%= agent_status_label(@agent_status) %></p>
+                      <% else %>
+                        <div class="flex items-center gap-1.5 text-zinc-400">
+                          Thinking
+                          <span class="inline-flex items-center gap-px">
+                            <span class="inline-block w-1 h-1 bg-current rounded-full animate-bounce [animation-delay:-0.2s]"></span>
+                            <span class="inline-block w-1 h-1 bg-current rounded-full animate-bounce [animation-delay:-0.1s]"></span>
+                            <span class="inline-block w-1 h-1 bg-current rounded-full animate-bounce"></span>
+                          </span>
+                        </div>
+                      <% end %>
+                    <% else %>
+                      <%= if idx == length(@messages) - 1 and @is_loading and @agent_status == :generating do %>
+                        <div data-live-content class="whitespace-pre-wrap"><%= message.content %></div>
+                      <% else %>
+                        <div data-live-content class="prose prose-invert prose-sm max-w-none prose-p:my-1 prose-ul:my-1 prose-ol:my-1 prose-pre:my-2 prose-code:px-1 prose-code:py-0.5 prose-code:rounded prose-code:bg-zinc-800 prose-code:before:content-[''] prose-code:after:content-['']">
+                          <%= render_markdown(message.content) %>
+                        </div>
+                        <%= if idx == length(@messages) - 1 and @is_loading and agent_status_label(@agent_status) do %>
+                          <p class="mt-2 text-xs text-zinc-500 animate-pulse"><%= agent_status_label(@agent_status) %></p>
+                        <% end %>
+                      <% end %>
+                    <% end %>
                   <% end %>
-                <% end %>
+                </div>
               <% else %>
                 <div class="whitespace-pre-wrap"><%= message.content %></div>
               <% end %>
