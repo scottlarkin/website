@@ -91,14 +91,14 @@
             <% end %>
 
             <%= if message.role == "user" do %>
-              <div class="flex gap-2 text-sm leading-relaxed">
+              <div class="term-row">
                 <span class="term-who term-who-user">you</span>
                 <span class="term-prompt term-prompt-user" aria-hidden="true">$</span>
-                <div class="term-body-user min-w-0 flex-1 whitespace-pre-wrap"><%= message.content %></div>
+                <div class="term-body-user"><%= message.content %></div>
               </div>
             <% else %>
               <%!-- assistant --%>
-              <div class="flex gap-2 text-sm leading-relaxed">
+              <div class="term-row">
                 <span class={"term-who " <> if(message_error?(message), do: "term-who-error", else: "term-who-agent")}>
                   scott
                 </span>
@@ -106,7 +106,7 @@
                   class={"term-prompt " <> if(message_error?(message), do: "text-rose-400/80", else: "term-prompt-agent")}
                   aria-hidden="true"
                 >&gt;</span>
-                <div class="term-body-agent min-w-0 flex-1">
+                <div class="term-body-agent">
                   <%= if message_error?(message) do %>
                     <div class="space-y-1 text-rose-200/90">
                       <p><%= user_facing_error_message() %></p>
@@ -228,20 +228,21 @@
     </div>
 
     <!-- Input -->
-    <div class="shrink-0 bg-zinc-950 px-4 pb-3 pt-1">
+    <div class="chat-composer shrink-0 bg-zinc-950 px-4 pb-3 pt-1">
       <form id="chat-form" phx-hook="ChatForm" phx-submit="send_message" class="flex items-center gap-2">
-        <label class="terminal-mono flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-200">
-          <span class="select-none text-zinc-600" aria-hidden="true">&gt;</span>
+        <label class="terminal-mono flex min-w-0 flex-1 items-center gap-2 text-zinc-200">
+          <span class="terminal-prompt-char select-none text-zinc-600" aria-hidden="true">&gt;</span>
           <input
             id="chat-input"
             type="text"
             name="message"
             value={@input}
             placeholder={@input_placeholder}
-            class="terminal-input min-w-0 flex-1 border-0 bg-transparent py-0.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-0"
+            class="terminal-input min-w-0 flex-1 border-0 bg-transparent py-0.5 text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-0"
             autocomplete="off"
-            autofocus
             spellcheck="false"
+            enterkeyhint="done"
+            inputmode="text"
             phx-change="update_input"
             phx-debounce="300"
           />
@@ -257,6 +258,17 @@
           >
             <span class="btn-glow-fx" aria-hidden="true"></span>
             <span aria-hidden="true">■</span>
+          </button>
+        <% else %>
+          <button
+            type="submit"
+            id="send-btn"
+            class="mobile-only-send btn-glow term-btn term-btn-lg shrink-0"
+            aria-label="Send"
+            title="Send"
+          >
+            <span class="btn-glow-fx" aria-hidden="true"></span>
+            <span>send</span>
           </button>
         <% end %>
       </form>

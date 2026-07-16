@@ -2,7 +2,11 @@
 <html lang="en">
   <head>
     <meta charset="utf-8"/>
-    <meta name="viewport" content="width=device-width, initial-scale=1"/>
+    <%!-- maximum-scale stops iOS focus/Done zoom; reinforced in app.js for iOS --%>
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+    />
     <meta name="csrf-token" content={get_csrf_token()}/>
     <title><%= @page_title || "scott" %></title>
     <meta name="description" content={@meta_description || "Chat with an AI assistant about Scott's skills, experience, projects, and contact."} />

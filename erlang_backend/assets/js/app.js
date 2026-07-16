@@ -154,6 +154,35 @@ function hideReconnectBanner() {
   document.querySelector("[data-reconnect-banner]")?.classList.add("hidden")
 }
 
+// Touch / narrow viewport — relax "always focus" so iOS Done can dismiss the KB.
+function isMobileUi() {
+  if (typeof window === "undefined") return false
+  if (window.matchMedia("(max-width: 767px)").matches) return true
+  if (window.matchMedia("(pointer: coarse)").matches && window.innerWidth < 1024) return true
+  return false
+}
+
+function isIOS() {
+  if (typeof navigator === "undefined") return false
+  const ua = navigator.userAgent || ""
+  if (/iPad|iPhone|iPod/.test(ua)) return true
+  // iPadOS 13+ reports as Mac with touch
+  return navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1
+}
+
+// Keep scale locked on iOS/mobile. Do NOT toggle this on blur — that caused zoom jumps.
+function lockIOSViewport() {
+  if (!isIOS() && !isMobileUi()) return
+  const meta = document.querySelector('meta[name="viewport"]')
+  if (!meta) return
+  meta.setAttribute(
+    "content",
+    "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+  )
+}
+
+lockIOSViewport()
+
 let Hooks = {
   AutoScroll: {
     mounted() {
@@ -209,7 +238,6 @@ let Hooks = {
         if (document.activeElement !== input) input.focus({preventScroll: true})
         syncBlockCaret()
       }
-      // Caret positioning is handled globally by syncBlockCaret() (ch units).
       this.syncCaret = () => syncBlockCaret()
       this.onSubmit = () => {
         this.shouldRefocus = true
@@ -222,14 +250,16 @@ let Hooks = {
         const input = this.getInput()
         this.holdBlur = !!(interactive && interactive !== input)
         if (!this.holdBlur) {
-          if (e.target !== input) e.preventDefault()
+          // Don't preventDefault on mobile — it can break keyboard / focus timing
+          if (!isMobileUi() && e.target !== input) e.preventDefault()
           this.focusInput()
         }
       }
       this.onPointerUp = () => {
         if (this.holdBlur) {
           this.holdBlur = false
-          this.focusInput()
+          // Desktop: reclaim after button click. Mobile: leave focus alone.
+          if (!isMobileUi()) this.focusInput()
         }
       }
       this.onBlur = () => {
@@ -237,8 +267,16 @@ let Hooks = {
         this.blurTimer = setTimeout(() => {
           this.blurTimer = null
           if (this.holdBlur) return
+
+          // Mobile: honor Done — stay blurred (desktop keeps always-focus).
+          if (isMobileUi() || isIOS()) {
+            lockIOSViewport()
+            window.scrollTo(0, 0)
+            return
+          }
+
           this.focusInput()
-        }, 0)
+        }, 50)
       }
       this.onKeyDown = (e) => {
         const input = this.getInput()
@@ -261,7 +299,8 @@ let Hooks = {
 
         if (!editKey) return
 
-        if (!focused) {
+        // Desktop-only: steal keystrokes into the composer when unfocused
+        if (!focused && !isMobileUi()) {
           input.focus({preventScroll: true})
           if (printable) {
             e.preventDefault()
@@ -276,7 +315,6 @@ let Hooks = {
         requestAnimationFrame(() => this.syncCaret())
       }
       this.onCaretSync = () => this.syncCaret()
-
       this.el.addEventListener("submit", this.onSubmit)
       document.addEventListener("pointerdown", this.onPointerDown, true)
       document.addEventListener("pointerup", this.onPointerUp, true)
@@ -290,7 +328,8 @@ let Hooks = {
         }
       }
       this.caretTimer = setInterval(() => this.syncCaret(), 50)
-      this.focusInput()
+      // Desktop: always focused. Mobile: wait for tap.
+      if (!isMobileUi()) this.focusInput()
       this.syncCaret()
     },
     destroyed() {
@@ -313,8 +352,16 @@ let Hooks = {
       if (!this.el.classList.contains("phx-submit-loading")) {
         this.clearTimers()
       }
+      const afterSubmit = this.shouldRefocus
       this.shouldRefocus = false
-      this.focusInput()
+
+      if (isMobileUi()) {
+        // After send, refocus so the user can keep typing.
+        // Never force-focus on stream ticks if they dismissed the keyboard.
+        if (afterSubmit) this.focusInput()
+      } else {
+        this.focusInput()
+      }
       this.syncCaret()
     },
     disconnected() {
@@ -498,4 +545,4 @@ window.addEventListener("focus", () => {
 })
 
 window.liveSocket = liveSocket
-// build 1784234397
+// build 1784235473

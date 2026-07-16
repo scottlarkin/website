@@ -90,18 +90,71 @@ html, body {
   letter-spacing: 0;
 }
 
+/*
+ * iOS Safari zooms focused form controls when computed font-size < 16px.
+ * Pair with maximum-scale=1 viewport (root layout + lockIOSViewport in app.js).
+ */
+input[type="text"],
+input[type="number"],
+input[type="email"],
+input[type="search"],
+input[type="tel"],
+input[type="url"],
+input[type="password"],
+textarea,
+select {
+  font-size: 16px !important;
+}
+
 /* Terminal composer input — real visible text, native caret styled as block */
 .terminal-input {
   font-family: inherit;
+  font-size: inherit; /* 16px from the rule above */
   color: #e4e4e7;
   caret-color: #38bdf8;
   /* Block caret where supported (Firefox; ignored elsewhere) */
   caret-shape: block;
 }
 
+.terminal-prompt-char {
+  font-size: 16px;
+}
+
+/* Desktop: Enter sends; no send button. Mobile: show [send]. */
+.mobile-only-send {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  .mobile-only-send {
+    display: inline-flex;
+  }
+
+  .chat-composer {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
+  }
+
+  #chat-root {
+    overscroll-behavior-x: none;
+    overflow: hidden;
+    touch-action: pan-y;
+  }
+
+  #messages {
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior: contain;
+  }
+}
+
 /* Transcript lines (no chat bubbles) */
 .term-line {
   max-width: 100%;
+  min-width: 0;
   padding: 0.55rem 0.65rem;
   border-left: 2px solid transparent;
 }
@@ -121,12 +174,27 @@ html, body {
   background: rgba(251, 113, 133, 0.05);
 }
 
+/* One row: who + prompt + body, shared metrics so glyphs line up */
+.term-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  min-width: 0;
+  max-width: 100%;
+  font-size: 0.875rem;
+  line-height: 1.625;
+}
+
 .term-who {
   flex-shrink: 0;
-  font-size: 0.75rem;
+  box-sizing: content-box;
+  width: 5ch; /* "scott" in mono */
+  font-size: inherit;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  line-height: inherit;
+  letter-spacing: 0;
   text-transform: lowercase;
+  text-align: right;
   user-select: none;
 }
 
@@ -144,6 +212,11 @@ html, body {
 
 .term-prompt {
   flex-shrink: 0;
+  width: 1ch;
+  font-size: inherit;
+  font-weight: 400;
+  line-height: inherit;
+  text-align: center;
   user-select: none;
 }
 
@@ -155,13 +228,27 @@ html, body {
   color: #71717a;
 }
 
+.term-body-user,
+.term-body-agent {
+  min-width: 0;
+  flex: 1 1 0%;
+  max-width: 100%;
+  line-height: inherit;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Plain text only — pre-wrap on agent would keep Earmark's inter-tag newlines as blank lines */
 .term-body-user {
   color: #f4f4f5;
   font-weight: 500;
+  white-space: pre-wrap;
 }
 
 .term-body-agent {
   color: #d4d4d8;
+  font-weight: 400;
+  white-space: normal;
 }
 
 /* Grey block cursor while the agent is streaming / thinking */
@@ -183,52 +270,59 @@ html, body {
   50%, 100% { opacity: 0; }
 }
 
-/* Markdown inside terminal transcript — overrides Tailwind preflight list reset */
+/* Markdown inside terminal transcript — tight, no card spacing */
 .term-prose {
-  font-size: 0.875rem;
-  line-height: 1.65;
-  color: #d4d4d8;
+  font-size: inherit;
+  line-height: inherit;
+  color: inherit;
+}
+
+.term-prose > *:first-child {
+  margin-top: 0 !important;
+}
+
+.term-prose > *:last-child {
+  margin-bottom: 0 !important;
 }
 
 .term-prose p {
-  margin: 0.45em 0;
-}
-
-.term-prose p:first-child {
-  margin-top: 0;
-}
-
-.term-prose p:last-child {
-  margin-bottom: 0;
+  margin: 0.35em 0;
 }
 
 .term-prose ul {
   list-style-type: disc !important;
   list-style-position: outside;
-  margin: 0.5em 0;
-  padding-left: 1.5rem;
+  margin: 0.3em 0;
+  padding-left: 1.25rem;
 }
 
 .term-prose ol {
   list-style-type: decimal !important;
   list-style-position: outside;
-  margin: 0.5em 0;
-  padding-left: 1.5rem;
+  margin: 0.3em 0;
+  padding-left: 1.25rem;
 }
 
 .term-prose li {
   display: list-item;
-  margin: 0.25em 0;
-  padding-left: 0.15rem;
+  margin: 0.1em 0;
+  padding-left: 0.1rem;
+}
+
+.term-prose li > p {
+  margin: 0; /* Earmark often wraps li text in <p> */
 }
 
 .term-prose li::marker {
   color: #71717a;
 }
 
-.term-prose ul ul {
+.term-prose ul ul,
+.term-prose ol ol,
+.term-prose ul ol,
+.term-prose ol ul {
   list-style-type: circle !important;
-  margin: 0.2em 0;
+  margin: 0.1em 0;
 }
 
 .term-prose strong,
@@ -244,7 +338,7 @@ html, body {
 }
 
 .term-prose code {
-  padding: 0.1em 0.3em;
+  padding: 0.05em 0.25em;
   border-radius: 0;
   background: #27272a;
   font-size: 0.9em;
@@ -257,8 +351,8 @@ html, body {
 }
 
 .term-prose pre {
-  margin: 0.5em 0;
-  padding: 0.6em 0.75em;
+  margin: 0.4em 0;
+  padding: 0.45em 0.6em;
   overflow-x: auto;
   border: 1px solid #3f3f46;
   border-radius: 0;
@@ -280,22 +374,28 @@ html, body {
 .term-prose h2,
 .term-prose h3,
 .term-prose h4 {
-  margin: 0.75em 0 0.35em;
+  margin: 0.5em 0 0.2em;
   color: #fafafa;
   font-weight: 700;
   line-height: 1.3;
 }
 
-.term-prose h1 { font-size: 1.1em; }
-.term-prose h2 { font-size: 1.05em; }
+.term-prose h1 { font-size: 1.05em; }
+.term-prose h2 { font-size: 1em; }
 .term-prose h3,
 .term-prose h4 { font-size: 1em; }
 
 .term-prose blockquote {
-  margin: 0.5em 0;
-  padding-left: 0.75rem;
+  margin: 0.35em 0;
+  padding-left: 0.6rem;
   border-left: 2px solid #52525b;
   color: #a1a1aa;
+}
+
+.term-prose hr {
+  margin: 0.5em 0;
+  border: 0;
+  border-top: 1px solid #3f3f46;
 }
 
 /* Terminal-style controls: square, no border chrome, [bracket] affordance */
