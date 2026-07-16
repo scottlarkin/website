@@ -16,6 +16,14 @@ defmodule AgentBackendWeb.ChatLive do
 
   # Load .env if present (for OPENROUTER_KEY and SYSTEM_PROMPT)
   defp load_env do
+    if Application.get_env(:agent_backend, :skip_dotenv, false) do
+      :ok
+    else
+      do_load_env()
+    end
+  end
+
+  defp do_load_env do
     candidates = [
       Path.join(File.cwd!(), ".env"),
       Path.join(File.cwd!(), "../.env"),

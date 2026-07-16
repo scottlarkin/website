@@ -6,8 +6,10 @@ defmodule AgentBackend.SystemPrompt do
 
   @filename "prompt.md"
 
-  def load do
-    case load_from_file() do
+  def load(opts \\ []) do
+    paths = Keyword.get(opts, :paths)
+
+    case load_from_file(paths) do
       prompt when is_binary(prompt) and prompt != "" ->
         prompt
 
@@ -16,8 +18,10 @@ defmodule AgentBackend.SystemPrompt do
     end
   end
 
-  def load_from_file do
-    prompt_path()
+  def load_from_file(paths \\ nil) do
+    (paths || default_paths())
+    |> Enum.map(&Path.expand/1)
+    |> Enum.find(&File.exists?/1)
     |> case do
       nil ->
         nil
@@ -34,15 +38,13 @@ defmodule AgentBackend.SystemPrompt do
     load() |> String.length()
   end
 
-  defp prompt_path do
+  def default_paths do
     [
       Path.join(File.cwd!(), @filename),
       Path.join(File.cwd!(), "../#{@filename}"),
       Path.join(File.cwd!(), "../../#{@filename}"),
       Path.expand("../../../#{@filename}", __DIR__)
     ]
-    |> Enum.map(&Path.expand/1)
-    |> Enum.find(&File.exists?/1)
   end
 
   defp default do

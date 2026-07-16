@@ -1,5 +1,5 @@
 defmodule AgentBackend.ToolsTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias AgentBackend.Tools
 
@@ -20,4 +20,26 @@ defmodule AgentBackend.ToolsTest do
     assert result.tool_call_id == "1"
     assert Jason.decode!(result.content)["error"]
   end
+
+  test "run_tool rescues exploding tools" do
+    prev = Application.get_env(:agent_backend, :tools)
+
+    try do
+      Application.put_env(:agent_backend, :tools, [
+        AgentBackend.Tools.OutputValidator,
+        AgentBackend.Tools.Exploding
+      ])
+
+      body = Tools.run_tool("exploding_tool", %{}, %{})
+      assert %{"passed" => true, "error" => "boom"} = Jason.decode!(body)
+    after
+      if prev do
+        Application.put_env(:agent_backend, :tools, prev)
+      else
+        Application.delete_env(:agent_backend, :tools)
+      end
+    end
+  end
 end
+
+

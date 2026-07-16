@@ -6,12 +6,16 @@ defmodule AgentBackend.MixProject do
       app: :agent_backend,
       version: "0.1.0",
       elixir: "~> 1.17",
+      elixirc_paths: elixirc_paths(Mix.env()),
       start_permanent: Mix.env() == :prod,
       listeners: [Phoenix.CodeReloader],
       deps: deps(),
       aliases: aliases()
     ]
   end
+
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
 
   defp aliases do
     [
@@ -48,7 +52,9 @@ defmodule AgentBackend.MixProject do
       {:bandit, "~> 1.12"},
       {:esbuild, "~> 0.8", runtime: false},
       {:req, "~> 0.5"},
-      {:earmark, "~> 1.4"}
+      {:earmark, "~> 1.4"},
+      {:lazy_html, ">= 0.1.0", only: :test}
     ]
   end
 end
+

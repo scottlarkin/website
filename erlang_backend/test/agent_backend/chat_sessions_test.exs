@@ -111,4 +111,41 @@ defmodule AgentBackend.ChatSessionsTest do
     after_files = File.ls!(dir) |> MapSet.new()
     assert MapSet.equal?(before, after_files)
   end
+
+  test "error flag round-trips on messages" do
+    id = ChatSessions.generate_id()
+
+    assert :ok =
+             ChatSessions.save(id, [
+               %{role: "assistant", content: "oops", timestamp: "t", error: true}
+             ])
+
+    assert %{messages: [msg]} = ChatSessions.get(id)
+    assert msg.error == true
+    assert msg.content == "oops"
+  end
+
+  test "atomic write leaves no tmp files" do
+    id = ChatSessions.generate_id()
+    dir = ChatSessions.sessions_dir()
+
+    assert :ok = ChatSessions.save(id, [%{role: "user", content: "x", timestamp: "t"}])
+
+    tmps = Path.wildcard(Path.join(dir, "#{id}.json.tmp*"))
+    assert tmps == []
+    assert File.exists?(Path.join(dir, "#{id}.json"))
+  end
+
+  test "ordered put_slack then save preserves both" do
+    id = ChatSessions.generate_id()
+    assert :ok = ChatSessions.put_slack_thread_ts(id, "thread.1")
+
+    assert :ok =
+             ChatSessions.save(id, [
+               %{role: "user", content: "u", timestamp: "t"}
+             ])
+
+    assert ChatSessions.get_slack_thread_ts(id) == "thread.1"
+    assert [%{content: "u"}] = ChatSessions.get(id).messages
+  end
 end

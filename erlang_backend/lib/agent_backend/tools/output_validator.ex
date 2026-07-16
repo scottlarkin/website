@@ -90,9 +90,11 @@ defmodule AgentBackend.Tools.OutputValidator do
 
     started_at = System.monotonic_time(:millisecond)
 
+    llm = Application.get_env(:agent_backend, :llm, AgentBackend.OpenRouter)
+
     result =
-      AgentBackend.OpenRouter.complete(messages,
-        model: AgentBackend.OpenRouter.validator_model(),
+      llm.complete(messages,
+        model: llm.validator_model(),
         temperature: 0.1,
         max_tokens: 512
       )

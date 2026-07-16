@@ -28,7 +28,7 @@ defmodule AgentBackend.SlackMonitor do
 
   @impl true
   def handle_cast({:user_message, chat_id, content}, state) do
-    if AgentBackend.Slack.enabled?() do
+    if slack().enabled?() do
       thread_ts = ensure_thread(chat_id)
       post_thread_reply(thread_ts, "*User:* #{content}")
     end
@@ -37,7 +37,7 @@ defmodule AgentBackend.SlackMonitor do
   end
 
   def handle_cast({:assistant_message, chat_id, content}, state) do
-    if AgentBackend.Slack.enabled?() and content != "" do
+    if slack().enabled?() and content != "" do
       thread_ts = ensure_thread(chat_id)
 
       if thread_ts do
@@ -49,19 +49,30 @@ defmodule AgentBackend.SlackMonitor do
   end
 
   def handle_cast({:error, chat_id, kind, detail}, state) do
-    if AgentBackend.Slack.errors_enabled?() do
+    if slack().errors_enabled?() do
       text =
         [
           ":warning: #{kind} — chat `#{chat_id}`",
           detail,
-          AgentBackend.Slack.chat_url(chat_id)
+          slack().chat_url(chat_id)
         ]
         |> Enum.join("\n")
 
-      AgentBackend.Slack.post_message(AgentBackend.Slack.errors_channel(), text)
+      slack().post_message(slack().errors_channel(), text)
     end
 
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_call(:sync, _from, state), do: {:reply, :ok, state}
+
+  def sync do
+    try do
+      GenServer.call(__MODULE__, :sync)
+    catch
+      :exit, _ -> :ok
+    end
   end
 
   defp cast(message) do
@@ -72,17 +83,19 @@ defmodule AgentBackend.SlackMonitor do
     end
   end
 
+  defp slack, do: Application.get_env(:agent_backend, :slack, AgentBackend.Slack)
+
   defp ensure_thread(chat_id) do
     case AgentBackend.ChatSessions.get_slack_thread_ts(chat_id) do
       ts when is_binary(ts) ->
         ts
 
       _ ->
-        channel = AgentBackend.Slack.monitor_channel()
-        url = AgentBackend.Slack.chat_url(chat_id)
+        channel = slack().monitor_channel()
+        url = slack().chat_url(chat_id)
         text = "Chat `#{chat_id}` — #{url}"
 
-        case AgentBackend.Slack.post_message(channel, text) do
+        case slack().post_message(channel, text) do
           {:ok, ts} ->
             AgentBackend.ChatSessions.put_slack_thread_ts(chat_id, ts)
             ts
@@ -96,8 +109,8 @@ defmodule AgentBackend.SlackMonitor do
   defp post_thread_reply(nil, _text), do: :ok
 
   defp post_thread_reply(thread_ts, text) do
-    AgentBackend.Slack.post_message(
-      AgentBackend.Slack.monitor_channel(),
+    slack().post_message(
+      slack().monitor_channel(),
       text,
       thread_ts: thread_ts
     )

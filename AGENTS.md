@@ -221,6 +221,8 @@ mix test
 mix assets.build    # or assets.deploy for prod-style digest
 ```
 
+Tests use **fakes** for OpenRouter (`:llm`) and Slack (`:slack`) via `config/test.exs` — no API keys required. Support code lives in `test/support/` (`LLM.Fake`, `Slack.Fake`, Conn/Live cases). Core coverage includes AgentLoop, AgentRuns hub, ChatSessions, multi-tab stream sync, SlackMonitor, LiveView send/join/error, health/404.
+
 Only after green tests:
 
 1. Dev: `./scripts/dev-server.sh` (3001). Prod: `systemctl --user restart agent-backend.service` (3000)

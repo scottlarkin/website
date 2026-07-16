@@ -7,8 +7,10 @@ config :agent_backend, AgentBackendWeb.Endpoint,
   live_view: [signing_salt: "test-live-view-salt"],
   check_origin: false
 
-# Isolated session files for tests (created per test module via Application.put_env when needed)
 config :agent_backend,
-  chat_sessions_dir: Path.expand("../tmp/test_chat_sessions", __DIR__)
+  chat_sessions_dir: Path.expand("../tmp/test_chat_sessions", __DIR__),
+  llm: AgentBackend.LLM.Fake,
+  slack: AgentBackend.Slack.Fake,
+  skip_dotenv: true
 
 config :logger, level: :warning

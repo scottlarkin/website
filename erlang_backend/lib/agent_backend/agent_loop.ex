@@ -190,7 +190,7 @@ defmodule AgentBackend.AgentLoop do
     require Logger
     Logger.warning("AgentLoop hit max_iters, forcing final completion")
 
-    case AgentBackend.OpenRouter.complete(messages) do
+    case llm().complete(messages) do
       {:ok, content} when is_binary(content) and content != "" ->
         content = unwrap_draft_json(content)
         callbacks.on_reset.()
@@ -243,7 +243,7 @@ defmodule AgentBackend.AgentLoop do
   defp stream_with_fallback(messages, callbacks) do
     on_token = callbacks.on_token
 
-    case AgentBackend.OpenRouter.stream(messages, on_token: on_token) do
+    case llm().stream(messages, on_token: on_token) do
       {:error, _reason} ->
         retry_non_streaming(messages, callbacks)
 
@@ -263,7 +263,7 @@ defmodule AgentBackend.AgentLoop do
     # Clear any partial stream tokens before replaying a full completion.
     callbacks.on_reset.()
 
-    case AgentBackend.OpenRouter.complete(messages) do
+    case llm().complete(messages) do
       {:ok, content} when is_binary(content) and content != "" ->
         unwrapped = unwrap_draft_json(content)
         callbacks.on_token.(unwrapped)
@@ -276,6 +276,8 @@ defmodule AgentBackend.AgentLoop do
         {:error, "Empty response from model"}
     end
   end
+
+  defp llm, do: Application.get_env(:agent_backend, :llm, AgentBackend.OpenRouter)
 
   defp max_iters do
     case Integer.parse(System.get_env("AGENT_MAX_ITERS", "5")) do

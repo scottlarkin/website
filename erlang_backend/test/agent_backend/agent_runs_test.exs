@@ -67,4 +67,44 @@ defmodule AgentBackend.AgentRunsTest do
     assert List.last(snap.messages).content == ""
     assert :ok = AgentRuns.finish(chat, "r1")
   end
+
+  test "full hub lifecycle hold_draft status error" do
+    chat = "runtest01"
+    assert :ok = AgentRuns.try_start(chat, "life", @msgs)
+    assert {:ok, _} = AgentRuns.append_token(chat, "life", "draft A")
+    assert {:ok, held} = AgentRuns.hold_draft(chat, "life")
+    assert held.held_draft == "draft A"
+    assert held.agent_status == :revising
+
+    assert {:ok, reset} = AgentRuns.reset_assistant(chat, "life")
+    assert List.last(reset.messages).content == ""
+
+    assert {:ok, st} = AgentRuns.set_status(chat, "life", :generating)
+    assert st.agent_status == :generating
+
+    assert {:ok, err} = AgentRuns.set_error(chat, "life", "Something went wrong")
+    assert List.last(err.messages).error == true
+    assert List.last(err.messages).content =~ "wrong"
+
+    assert :ignore = AgentRuns.append_token(chat, "wrong-run", "x")
+    assert :ok = AgentRuns.finish(chat, "life")
+    assert AgentRuns.live_state(chat) == nil
+  end
+
+  test "serialized concurrent appends" do
+    chat = "runtest02"
+    assert :ok = AgentRuns.try_start(chat, "c", @msgs)
+
+    1..20
+    |> Enum.map(fn i -> Task.async(fn -> AgentRuns.append_token(chat, "c", "#{i}") end) end)
+    |> Enum.each(&Task.await/1)
+
+    content = List.last(AgentRuns.live_state(chat).messages).content
+    # All digits 1-20 appear (order may interleave by task scheduling but GenServer serializes)
+    for i <- 1..20 do
+      assert content =~ "#{i}"
+    end
+
+    assert :ok = AgentRuns.finish(chat, "c")
+  end
 end

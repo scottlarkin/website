@@ -4,11 +4,11 @@ defmodule AgentBackend.Tools do
   Add a module to @tools to register a new tool.
   """
 
-  @tools [
+  @default_tools [
     AgentBackend.Tools.OutputValidator
   ]
 
-  def definitions, do: Enum.map(@tools, fn mod -> mod.schema() end)
+  def definitions, do: Enum.map(tools_list(), fn mod -> mod.schema() end)
 
   def run_tool(name, arguments, ctx) do
     case find_module(name) do
@@ -48,7 +48,11 @@ defmodule AgentBackend.Tools do
     end)
   end
 
+  defp tools_list do
+    Application.get_env(:agent_backend, :tools, @default_tools)
+  end
+
   defp find_module(name) do
-    Enum.find(@tools, &(&1.name() == name))
+    Enum.find(tools_list(), &(&1.name() == name))
   end
 end
