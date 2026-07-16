@@ -11,6 +11,10 @@
 
 html, body {
   height: 100%;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  /* Keep glyph widths stable for terminal caret (N ch) */
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
 }
 
 #root {
@@ -78,17 +82,115 @@ html, body {
   animation: msg-enter 220ms ease-out both;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .msg-enter {
-    animation: none;
-  }
+/* Explicit mono (same as site default; used on input/caret for ch-width lockstep) */
+.terminal-mono {
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
+  letter-spacing: 0;
+}
 
-  .send-btn {
-    transition: none !important;
-  }
+/* Terminal composer input — real visible text, native caret styled as block */
+.terminal-input {
+  font-family: inherit;
+  color: #e4e4e7;
+  caret-color: #38bdf8;
+  /* Block caret where supported (Firefox; ignored elsewhere) */
+  caret-shape: block;
+}
 
-  .animate-pulse,
-  .animate-bounce {
-    animation: none !important;
-  }
+/* Terminal-style controls: square, no border chrome, [bracket] affordance */
+.term-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin: 0;
+  padding: 0.2rem 0.35rem;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #71717a;
+  font: inherit;
+  font-size: 0.6875rem;
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 80ms linear, background-color 80ms linear;
+}
+
+.term-btn::before {
+  content: "[";
+  color: #52525b;
+}
+
+.term-btn::after {
+  content: "]";
+  color: #52525b;
+}
+
+.term-btn:hover,
+.term-btn:focus-visible {
+  color: #bae6fd;
+  background: rgba(39, 39, 42, 0.55);
+  outline: none;
+}
+
+.term-btn:hover::before,
+.term-btn:hover::after,
+.term-btn:focus-visible::before,
+.term-btn:focus-visible::after {
+  color: #38bdf8;
+}
+
+.term-btn-danger {
+  color: #a1a1aa;
+}
+
+.term-btn-danger:hover,
+.term-btn-danger:focus-visible {
+  color: #fecdd3;
+  background: rgba(76, 5, 25, 0.35);
+}
+
+.term-btn-danger:hover::before,
+.term-btn-danger:hover::after,
+.term-btn-danger:focus-visible::before,
+.term-btn-danger:focus-visible::after {
+  color: #fb7185;
+}
+
+.term-btn-lg {
+  font-size: 0.75rem;
+  padding: 0.3rem 0.45rem;
+}
+
+/* Icon-only stop: brackets around the glyph, square hit target */
+.term-btn-icon {
+  width: 1.75rem;
+  height: 1.75rem;
+  justify-content: center;
+  padding: 0;
+  font-size: 0.75rem;
+}
+
+/* Cursor-local button glow — painted in JS */
+.btn-glow {
+  position: relative;
+  overflow: hidden;
+}
+
+.btn-glow-fx {
+  position: absolute;
+  inset: 0;
+  border-radius: 0;
+  pointer-events: none;
+  opacity: 0;
+  z-index: 0;
+}
+
+.btn-glow > :not(.btn-glow-fx) {
+  position: relative;
+  z-index: 1;
 }

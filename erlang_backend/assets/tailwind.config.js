@@ -45,7 +45,13 @@ module.exports = {
     'prose', 'prose-invert', 'prose-sm', 'max-w-none'
   ],
   theme: {
-    extend: {}
+    extend: {
+      fontFamily: {
+        // Site-wide coder mono (loaded in root layout via Google Fonts)
+        sans: ['"JetBrains Mono"', "ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "monospace"],
+        mono: ['"JetBrains Mono"', "ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "monospace"]
+      }
+    }
   },
   plugins: [
     require('@tailwindcss/typography')

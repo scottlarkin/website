@@ -18,10 +18,16 @@
     <meta name="twitter:description" content={@meta_description || "Chat with an AI assistant about Scott's skills, experience, projects, and contact."} />
     <meta name="theme-color" content="#09090b" />
     <link rel="icon" type="image/svg+xml" href={AgentBackendWeb.Endpoint.static_path("/images/favicon.svg")} />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap"
+      rel="stylesheet"
+    />
     <style><%= raw(app_css()) %></style>
-    <script defer phx-track-static type="text/javascript" src={AgentBackendWeb.Endpoint.static_path("/assets/app.js")}></script>
+    <script defer phx-track-static type="text/javascript" src={app_js_path()}></script>
   </head>
-  <body class="h-full bg-zinc-950 text-zinc-200 font-sans antialiased">
+  <body class="h-full bg-zinc-950 text-zinc-200 font-mono antialiased">
     <%= @inner_content %>
   </body>
 </html>

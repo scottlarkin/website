@@ -1,6 +1,6 @@
 <div
   id="chat-root"
-  class="h-dvh overflow-hidden bg-zinc-950 text-zinc-200 flex flex-col font-sans"
+  class="h-dvh overflow-hidden bg-zinc-950 text-zinc-200 flex flex-col font-mono"
 >
   <div data-reconnect-banner class="hidden border-b border-amber-900/50 bg-amber-950/40 px-4 py-1.5 text-center text-xs text-amber-200/80">
     Reconnecting…
@@ -11,15 +11,10 @@
     <button
       type="button"
       phx-click="new_chat"
-      class="flex items-center gap-2 rounded-md px-1 py-0.5 -ml-1 text-left transition-colors hover:bg-zinc-900 hover:text-zinc-100"
+      class="term-btn term-btn-lg -ml-1 text-zinc-400"
       aria-label="Home"
     >
-      <div class="w-6 h-6 rounded bg-white/10 flex items-center justify-center">
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-        </svg>
-      </div>
-      <span class="text-sm font-medium tracking-tight text-zinc-300">Scott</span>
+      <span class="text-sm font-medium tracking-tight text-zinc-300">scott</span>
     </button>
 
     <div class="flex items-center gap-1.5">
@@ -29,26 +24,22 @@
           id="copy-link-btn"
           data-copy-link
           data-copy-url={AgentBackendWeb.Endpoint.url() <> "/c/#{@chat_id}"}
-          class="flex items-center gap-1 rounded-full border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-[10px] font-medium text-zinc-500 transition-colors hover:border-sky-500/30 hover:bg-zinc-800 hover:text-sky-200/90"
+          class="btn-glow term-btn"
           title="Copy chat link"
         >
-          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
-          </svg>
-          <span data-copy-label>Share</span>
+          <span class="btn-glow-fx" aria-hidden="true"></span>
+          <span data-copy-label>share</span>
         </button>
       <% end %>
 
       <button
         phx-click="new_chat"
         id="new-chat-btn"
-        class="flex items-center gap-1 rounded-full border border-zinc-800 bg-zinc-900 px-2 py-0.5 text-[10px] font-medium text-zinc-500 transition-colors hover:border-sky-500/30 hover:bg-zinc-800 hover:text-sky-200/90"
+        class="btn-glow term-btn"
         title="New chat (⌘K)"
       >
-        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
-          <path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16m8-8H4" />
-        </svg>
-        <span>New</span>
+        <span class="btn-glow-fx" aria-hidden="true"></span>
+        <span>new</span>
       </button>
     </div>
   </header>
@@ -70,7 +61,7 @@
           class="flex h-full flex-col items-center justify-center text-center px-4 relative z-10"
         >
           <h2 class="text-xl font-semibold text-zinc-100 tracking-tight">Hi, I'm Scott.</h2>
-          <p class="mt-3 max-w-sm font-mono text-sm text-zinc-500">
+          <p class="terminal-mono mt-3 max-w-sm text-sm text-zinc-500">
             <span class="text-zinc-600">&gt; </span><span data-typewriter></span><span data-cursor class="text-sky-400/90 animate-pulse">▌</span>
           </p>
           <p class="mt-2 max-w-sm text-xs text-zinc-600 leading-relaxed">
@@ -111,12 +102,9 @@
                           type="button"
                           phx-click="reload_message"
                           phx-value-index={idx}
-                          class="mt-1 inline-flex items-center gap-1.5 rounded-full border border-rose-900/40 bg-rose-950/30 px-3 py-1 text-xs font-medium text-rose-200/90 transition-colors hover:bg-rose-950/50 hover:text-rose-100"
+                          class="term-btn term-btn-danger term-btn-lg mt-1"
                         >
-                          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                          </svg>
-                          Try again
+                          retry
                         </button>
                       <% end %>
                       <%= if @chat_id && message_has_content?(message) do %>
@@ -124,13 +112,10 @@
                           href={"/branch/#{@chat_id}/#{idx}"}
                           target="_blank"
                           rel="noopener noreferrer"
-                          class="mt-1 ml-1 inline-flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900/50 px-3 py-1 text-xs font-medium text-zinc-400 transition-colors hover:border-sky-500/30 hover:text-sky-200/90"
+                          class="term-btn term-btn-lg mt-1 ml-1"
                           title="Open a new chat forked from here"
                         >
-                          <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                            <path stroke-linecap="round" stroke-linejoin="round" d="M7 7h10M7 12h6m-6 5h10M17 3v4m0 0h4m-4 0l4-4" />
-                          </svg>
-                          Branch
+                          branch
                         </a>
                       <% end %>
                     </div>
@@ -259,41 +244,35 @@
     </div>
 
     <!-- Input -->
-    <div class="shrink-0 border-t border-zinc-800 bg-zinc-950 p-3">
+    <div class="shrink-0 bg-zinc-950 px-4 pb-3 pt-1">
       <form id="chat-form" phx-hook="ChatForm" phx-submit="send_message" class="flex items-center gap-2">
-        <input
-          id="chat-input"
-          type="text"
-          name="message"
-          value={@input}
-          placeholder={@input_placeholder}
-          class="flex-1 bg-zinc-900 border border-zinc-800 rounded-full px-4 py-2.5 text-sm placeholder:text-zinc-500 transition-colors hover:border-sky-500/30 hover:bg-zinc-800 focus:border-sky-500/40 focus:ring-1 focus:ring-sky-500/20 focus:outline-none"
-          autocomplete="off"
-          phx-change="update_input"
-          phx-debounce="300"
-        />
+        <label class="terminal-mono flex min-w-0 flex-1 items-center gap-2 text-sm text-zinc-200">
+          <span class="select-none text-zinc-600" aria-hidden="true">&gt;</span>
+          <input
+            id="chat-input"
+            type="text"
+            name="message"
+            value={@input}
+            placeholder={@input_placeholder}
+            class="terminal-input min-w-0 flex-1 border-0 bg-transparent py-0.5 text-sm text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-0"
+            autocomplete="off"
+            autofocus
+            spellcheck="false"
+            phx-change="update_input"
+            phx-debounce="300"
+          />
+        </label>
         <%= if @is_loading do %>
           <button
             type="button"
             phx-click="cancel_run"
             id="cancel-run-btn"
-            class="flex h-8 w-8 items-center justify-center rounded-full border border-zinc-700 bg-zinc-900 text-zinc-300 transition-all hover:border-rose-500/40 hover:bg-zinc-800 hover:text-rose-200 active:scale-95"
+            class="btn-glow btn-glow-danger term-btn term-btn-danger term-btn-icon shrink-0"
             aria-label="Stop"
             title="Stop generating"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" viewBox="0 0 24 24" fill="currentColor">
-              <rect x="6" y="6" width="12" height="12" rx="1" />
-            </svg>
-          </button>
-        <% else %>
-          <button
-            type="submit"
-            class="flex h-8 w-8 items-center justify-center rounded-full bg-white text-zinc-950 transition-all hover:bg-sky-50 active:scale-95 send-btn"
-            aria-label="Send"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14M12 5l7 7-7 7" />
-            </svg>
+            <span class="btn-glow-fx" aria-hidden="true"></span>
+            <span aria-hidden="true">■</span>
           </button>
         <% end %>
       </form>
@@ -306,9 +285,10 @@
               type="button"
               phx-click="send_suggestion"
               phx-value-message={s.prompt}
-              class="text-xs rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1 text-zinc-400 transition-colors hover:border-sky-500/30 hover:bg-zinc-800 hover:text-sky-200/90"
+              class="btn-glow term-btn term-btn-lg"
             >
-              <%= s.label %>
+              <span class="btn-glow-fx" aria-hidden="true"></span>
+              <span><%= s.label %></span>
             </button>
           <% end %>
         </div>
