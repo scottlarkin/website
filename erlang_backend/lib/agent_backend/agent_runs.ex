@@ -18,8 +18,30 @@ defmodule AgentBackend.AgentRuns do
     GenServer.call(__MODULE__, {:try_start, chat_id, run_id, messages})
   end
 
+  @doc """
+  Clear a run from the hub.
+
+  Returns `:ok` if this call removed the entry, or `:already_done` if the run
+  was already gone (cancelled or finished by another path).
+  """
   def finish(chat_id, run_id) when is_binary(chat_id) and is_binary(run_id) do
     GenServer.call(__MODULE__, {:finish, chat_id, run_id})
+  end
+
+  @doc "Register the runner process so cancel can kill it."
+  def set_runner(chat_id, run_id, pid)
+      when is_binary(chat_id) and is_binary(run_id) and is_pid(pid) do
+    GenServer.call(__MODULE__, {:set_runner, chat_id, run_id, pid})
+  end
+
+  @doc """
+  Cancel an active run: settle messages, kill runner, free single-flight.
+
+  Settled messages keep a non-empty partial assistant reply; drop an empty
+  trailing assistant placeholder. Returns `{:ok, messages}` or `:ignore`.
+  """
+  def cancel(chat_id, run_id) when is_binary(chat_id) and is_binary(run_id) do
+    GenServer.call(__MODULE__, {:cancel, chat_id, run_id})
   end
 
   def active?(chat_id) when is_binary(chat_id) do
@@ -74,7 +96,8 @@ defmodule AgentBackend.AgentRuns do
           run_id: run_id,
           messages: messages,
           agent_status: :generating,
-          held_draft: nil
+          held_draft: nil,
+          runner_pid: nil
         }
 
         {:reply, :ok, Map.put(state, chat_id, entry)}
@@ -88,13 +111,35 @@ defmodule AgentBackend.AgentRuns do
   end
 
   def handle_call({:finish, chat_id, run_id}, _from, state) do
-    state =
-      case Map.get(state, chat_id) do
-        %{run_id: ^run_id} -> Map.delete(state, chat_id)
-        _ -> state
-      end
+    case Map.get(state, chat_id) do
+      %{run_id: ^run_id} ->
+        {:reply, :ok, Map.delete(state, chat_id)}
 
-    {:reply, :ok, state}
+      _ ->
+        {:reply, :already_done, state}
+    end
+  end
+
+  def handle_call({:set_runner, chat_id, run_id, pid}, _from, state) do
+    case Map.get(state, chat_id) do
+      %{run_id: ^run_id} = entry ->
+        {:reply, :ok, Map.put(state, chat_id, %{entry | runner_pid: pid})}
+
+      _ ->
+        {:reply, :ignore, state}
+    end
+  end
+
+  def handle_call({:cancel, chat_id, run_id}, _from, state) do
+    case Map.get(state, chat_id) do
+      %{run_id: ^run_id} = entry ->
+        messages = settle_cancelled_messages(entry.messages)
+        kill_runner(entry[:runner_pid])
+        {:reply, {:ok, messages}, Map.delete(state, chat_id)}
+
+      _ ->
+        {:reply, :ignore, state}
+    end
   end
 
   def handle_call({:active?, chat_id}, _from, state) do
@@ -200,6 +245,30 @@ defmodule AgentBackend.AgentRuns do
 
       _ ->
         {:reply, :ignore, state}
+    end
+  end
+
+  defp kill_runner(pid) when is_pid(pid) do
+    if Process.alive?(pid), do: Process.exit(pid, :kill)
+    :ok
+  end
+
+  defp kill_runner(_), do: :ok
+
+  defp settle_cancelled_messages(messages) when is_list(messages) do
+    case List.last(messages) do
+      %{role: "assistant", content: c} = last when is_binary(c) and c != "" ->
+        updated = Map.delete(last, :error)
+        List.replace_at(messages, length(messages) - 1, updated)
+
+      %{role: "assistant", content: c} when c in [nil, ""] ->
+        Enum.drop(messages, -1)
+
+      %{role: "assistant"} ->
+        Enum.drop(messages, -1)
+
+      _ ->
+        messages
     end
   end
 

@@ -18,6 +18,9 @@ defmodule AgentBackendWeb.Router do
   scope "/", AgentBackendWeb do
     pipe_through :browser
 
+    # Fork chat at message index → new session (real link, works with target=_blank)
+    get "/branch/:chat_id/:index", BranchController, :create
+
     live "/c/:id", ChatLive, :show
     live "/", ChatLive, :show
     live "/chat", ChatLive, :show

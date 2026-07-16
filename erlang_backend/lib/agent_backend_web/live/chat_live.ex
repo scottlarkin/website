@@ -282,17 +282,81 @@ defmodule AgentBackendWeb.ChatLive do
 
   @impl true
   def handle_event("retry_last", _params, socket) do
+    case last_assistant_index(socket.assigns.messages) do
+      nil ->
+        {:noreply, socket}
+
+      idx ->
+        handle_event("reload_message", %{"index" => Integer.to_string(idx)}, socket)
+    end
+  end
+
+  @impl true
+  def handle_event("reload_message", %{"index" => idx_param}, socket) do
     if socket.assigns.is_loading or busy?(socket) do
       {:noreply, socket}
     else
-      case last_user_content(socket.assigns.messages) do
+      case parse_nonneg_int(idx_param) do
         nil ->
           {:noreply, socket}
 
-        _content ->
-          messages = drop_trailing_failed_assistant(socket.assigns.messages)
-          start_agent_for_messages(messages, socket, log_user?: false)
+        idx ->
+          messages = socket.assigns.messages
+          last_idx = length(messages) - 1
+
+          # Regenerating is only allowed on the most recent assistant turn so
+          # mid-thread reload cannot wipe later messages (use branch instead).
+          case Enum.at(messages, idx) do
+            %{role: "assistant"} when idx == last_idx and last_idx >= 0 ->
+              context = Enum.take(messages, idx)
+
+              if last_user_content(context) do
+                start_agent_for_messages(context, socket, log_user?: false)
+              else
+                {:noreply, socket}
+              end
+
+            _ ->
+              {:noreply, socket}
+          end
       end
+    end
+  end
+
+  @impl true
+  def handle_event("cancel_run", _params, socket) do
+    chat_id = socket.assigns.chat_id
+    run_id = socket.assigns.run_id
+
+    if socket.assigns.is_loading and is_binary(chat_id) and is_binary(run_id) do
+      case AgentBackend.AgentRuns.cancel(chat_id, run_id) do
+        {:ok, messages} ->
+          _ = AgentBackend.ChatSessions.save(chat_id, messages)
+
+          broadcast_stream_state(chat_id, run_id, %{
+            run_id: run_id,
+            messages: messages,
+            agent_status: nil,
+            held_draft: nil,
+            is_loading: false
+          })
+
+          {:noreply,
+           assign(socket,
+             messages: messages,
+             is_loading: false,
+             agent_status: nil,
+             held_draft: nil,
+             thinking_line: nil,
+             validation_badge: false,
+             run_id: nil
+           )}
+
+        :ignore ->
+          {:noreply, socket}
+      end
+    else
+      {:noreply, socket}
     end
   end
 
@@ -420,41 +484,72 @@ defmodule AgentBackendWeb.ChatLive do
             end
 
           Task.start(fn ->
-            system_prompt = AgentBackend.SystemPrompt.load()
-            require Logger
-            Logger.info("Starting agent loop for: #{inspect(message)} (id=#{chat_id} run=#{run_id})")
+            # Register before work so cancel can kill this runner process.
+            # If cancel already cleared the hub, skip the LLM call entirely.
+            case AgentBackend.AgentRuns.set_runner(chat_id, run_id, self()) do
+              :ignore ->
+                :ok
 
-            callbacks = agent_callbacks(chat_id, run_id)
+              :ok ->
+                system_prompt = AgentBackend.SystemPrompt.load()
+                require Logger
+                Logger.info("Starting agent loop for: #{inspect(message)} (id=#{chat_id} run=#{run_id})")
 
-            task =
-              Task.async(fn ->
-                AgentBackend.AgentLoop.run(user_messages, system_prompt, callbacks)
-              end)
+                callbacks = agent_callbacks(chat_id, run_id)
 
-            try do
-              case Task.yield(task, agent_timeout_ms()) || Task.shutdown(task, :brutal_kill) do
-                {:ok, content} when is_binary(content) and content != "" ->
-                  persist_assistant_reply(chat_id, user_messages, content)
-                  # Final disk snapshot for any tab that was mid-catch-up
-                  broadcast_agent_event(chat_id, run_id, :stream_done_finalize)
+                task =
+                  Task.async(fn ->
+                    AgentBackend.AgentLoop.run(user_messages, system_prompt, callbacks)
+                  end)
 
-                {:ok, _} ->
-                  :ok
+                try do
+                  case Task.yield(task, agent_timeout_ms()) || Task.shutdown(task, :brutal_kill) do
+                    {:ok, content} when is_binary(content) and content != "" ->
+                      # Only persist if we still own the run (not cancelled).
+                      case AgentBackend.AgentRuns.finish(chat_id, run_id) do
+                        :ok ->
+                          persist_assistant_reply(chat_id, user_messages, content)
+                          broadcast_agent_event(chat_id, run_id, :stream_done_finalize)
 
-                nil ->
-                  Logger.warning("Agent loop timed out for chat #{chat_id}")
-                  apply_and_broadcast_error(chat_id, run_id, :timeout)
-                  AgentBackend.SlackMonitor.log_error(chat_id, :timeout, "Response timed out")
-                  persist_error_assistant(chat_id, user_messages)
+                        :already_done ->
+                          :ok
+                      end
 
-                {:exit, reason} ->
-                  Logger.warning("Agent loop crashed for chat #{chat_id}: #{inspect(reason)}")
-                  apply_and_broadcast_error(chat_id, run_id, :crash)
-                  AgentBackend.SlackMonitor.log_error(chat_id, :crash, inspect(reason))
-                  persist_error_assistant(chat_id, user_messages)
-              end
-            after
-              AgentBackend.AgentRuns.finish(chat_id, run_id)
+                    {:ok, _} ->
+                      _ = AgentBackend.AgentRuns.finish(chat_id, run_id)
+                      :ok
+
+                    nil ->
+                      Logger.warning("Agent loop timed out for chat #{chat_id}")
+
+                      case apply_and_broadcast_error(chat_id, run_id, :timeout) do
+                        :ok ->
+                          AgentBackend.SlackMonitor.log_error(chat_id, :timeout, "Response timed out")
+                          persist_error_assistant(chat_id, user_messages)
+
+                        :ignore ->
+                          :ok
+                      end
+
+                      _ = AgentBackend.AgentRuns.finish(chat_id, run_id)
+
+                    {:exit, reason} ->
+                      Logger.warning("Agent loop crashed for chat #{chat_id}: #{inspect(reason)}")
+
+                      case apply_and_broadcast_error(chat_id, run_id, :crash) do
+                        :ok ->
+                          AgentBackend.SlackMonitor.log_error(chat_id, :crash, inspect(reason))
+                          persist_error_assistant(chat_id, user_messages)
+
+                        :ignore ->
+                          :ok
+                      end
+
+                      _ = AgentBackend.AgentRuns.finish(chat_id, run_id)
+                  end
+                after
+                  _ = AgentBackend.AgentRuns.finish(chat_id, run_id)
+                end
             end
           end)
 
@@ -472,19 +567,26 @@ defmodule AgentBackendWeb.ChatLive do
     end)
   end
 
-  defp drop_trailing_failed_assistant(messages) do
-    case List.last(messages) do
-      %{role: "assistant"} = last ->
-        if message_error?(last) or last.content in [nil, ""] do
-          Enum.drop(messages, -1)
-        else
-          messages
-        end
+  defp last_assistant_index(messages) do
+    messages
+    |> Enum.with_index()
+    |> Enum.reverse()
+    |> Enum.find_value(fn
+      {%{role: "assistant"}, idx} -> idx
+      _ -> nil
+    end)
+  end
 
-      _ ->
-        messages
+  defp parse_nonneg_int(val) when is_integer(val) and val >= 0, do: val
+
+  defp parse_nonneg_int(val) when is_binary(val) do
+    case Integer.parse(val) do
+      {n, ""} when n >= 0 -> n
+      _ -> nil
     end
   end
+
+  defp parse_nonneg_int(_), do: nil
 
   @impl true
   def handle_info(:thinking_tick, socket) do
@@ -652,18 +754,19 @@ defmodule AgentBackendWeb.ChatLive do
     }
   end
 
+  # Returns `:ok` if this run still owned the hub, `:ignore` if already cancelled/finished.
   defp apply_and_broadcast_error(chat_id, run_id, _kind) do
     error_msg = user_facing_error_message()
 
     case AgentBackend.AgentRuns.set_error(chat_id, run_id, error_msg) do
       {:ok, snapshot} ->
         broadcast_stream_state(chat_id, run_id, Map.put(snapshot, :is_loading, false))
+        broadcast_agent_event(chat_id, run_id, {:stream_error, :stream_error})
+        :ok
 
       :ignore ->
-        :ok
+        :ignore
     end
-
-    broadcast_agent_event(chat_id, run_id, {:stream_error, :stream_error})
   end
 
   defp broadcast_agent_event(chat_id, run_id, event)
@@ -756,6 +859,10 @@ defmodule AgentBackendWeb.ChatLive do
   def message_error?(%{"error" => true}), do: true
   def message_error?(%{"error" => "true"}), do: true
   def message_error?(_), do: false
+
+  def message_has_content?(%{content: c}) when is_binary(c) and c != "", do: true
+  def message_has_content?(%{"content" => c}) when is_binary(c) and c != "", do: true
+  def message_has_content?(_), do: false
 
   def agent_status_label(nil), do: nil
   def agent_status_label(:generating), do: nil

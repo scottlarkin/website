@@ -10,6 +10,9 @@ Live at [scott.larkin.cc](https://scott.larkin.cc)
 - **Agent loop** — stream a draft, LLM-backed fact check, optional revise, then finalize
 - Shareable chat URLs (`/c/:id`) with atomic JSON file persistence
 - Single-flight runs (one agent Task per chat) with multi-tab stream sync via PubSub
+- **Stop** mid-response (keeps partial text if any streamed)
+- **Reload** last assistant reply only (same prior context)
+- **Branch** any message into a new chat tab (`/branch/:chat_id/:index` → new `/c/:id`)
 - System prompt loaded from `prompt.md` at the repo root
 - Optional Slack monitoring — one thread per chat, separate error channel
 - Dark, minimal chat UI (Tailwind CSS) with revision UX (held draft, status labels)
@@ -95,22 +98,25 @@ Slack monitoring is enabled only when **all three** Slack vars are set; otherwis
 ```
 Browser  ──LiveView WS──►  ChatLive
                               │
-                              ├─ AgentRuns (single-flight + live stream hub)
+                              ├─ AgentRuns (single-flight + live hub + cancel)
                               ├─ ChatSessions (serialized JSON persistence)
                               ├─ PubSub chat:<id> (tokens, status, multi-tab sync)
                               │
                               └─ Task ──► AgentLoop
                                             ├─ OpenRouter stream (SSE) / complete
                                             └─ Tools.OutputValidator (LLM fact check)
+
+Browser  ──GET /branch/:chat_id/:index──►  BranchController ──► new /c/:id
 ```
 
 ### Components
 
 | Module | Role |
 | --- | --- |
-| `ChatLive` | UI, send/retry, URL routing (`/`, `/chat`, `/c/:id`), spawns agent Task |
+| `ChatLive` | UI, send/stop/reload, URL routing (`/`, `/chat`, `/c/:id`), spawns agent Task |
+| `BranchController` | Fork transcript at message index into a new shareable chat |
 | `AgentLoop` | Stream draft → auto-validate → revise → finalize |
-| `AgentRuns` | At most one run per `chat_id`; holds live messages/status for multi-tab catch-up |
+| `AgentRuns` | At most one run per `chat_id`; live messages/status; cancelable runner PID |
 | `ChatSessions` | File-backed sessions under `priv/chat_sessions/<id>.json` |
 | `OpenRouter` | Streaming (SSE) and non-streaming chat completions |
 | `Tools` / `OutputValidator` | Extensible tool registry; pure-LLM grounding checker |

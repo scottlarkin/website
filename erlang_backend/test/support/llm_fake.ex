@@ -55,9 +55,9 @@ defmodule AgentBackend.LLM.Fake do
     :ets.lookup_element(@table, :calls, 2) |> Enum.reverse()
   end
 
-  def stream(_messages, opts) do
+  def stream(messages, opts) do
     ensure_table()
-    record({:stream, opts})
+    record({:stream, messages, opts})
     on_token = Keyword.fetch!(opts, :on_token)
 
     case pop(:stream_q) do
@@ -66,6 +66,9 @@ defmodule AgentBackend.LLM.Fake do
 
       fun when is_function(fun, 1) ->
         fun.(on_token)
+
+      fun when is_function(fun, 2) ->
+        fun.(messages, on_token)
 
       {:ok, content, chunks} when is_list(chunks) ->
         Enum.each(chunks, on_token)
@@ -83,9 +86,9 @@ defmodule AgentBackend.LLM.Fake do
     end
   end
 
-  def complete(_messages, opts \\ []) do
+  def complete(messages, opts \\ []) do
     ensure_table()
-    record({:complete, opts})
+    record({:complete, messages, opts})
 
     case pop(:complete_q) do
       nil ->
@@ -107,6 +110,25 @@ defmodule AgentBackend.LLM.Fake do
       other ->
         {:error, "LLM.Fake: bad complete script #{inspect(other)}"}
     end
+  end
+
+  @doc "Stream call histories as recorded by stream/2 (oldest first)."
+  def stream_calls do
+    calls()
+    |> Enum.filter(fn
+      {:stream, _msgs, _opts} -> true
+      {:stream, _opts} -> true
+      _ -> false
+    end)
+  end
+
+  @doc "Messages lists passed to stream/2 (oldest first)."
+  def stream_message_histories do
+    calls()
+    |> Enum.flat_map(fn
+      {:stream, msgs, _opts} when is_list(msgs) -> [msgs]
+      _ -> []
+    end)
   end
 
   defp ensure_table do

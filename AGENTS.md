@@ -15,13 +15,14 @@ The chat uses an **agent loop**: stream a draft reply, run an LLM-backed `output
 | Path                                                            | Role                                                                   |
 | --------------------------------------------------------------- | ---------------------------------------------------------------------- |
 | `erlang_backend/lib/agent_backend_web/live/chat_live.ex`        | Chat UI, agent task spawn, PubSub stream events, URL routing           |
-| `erlang_backend/lib/agent_backend_web/live/chat_live.html.heex` | Message rendering, held-draft revision UX                              |
+| `erlang_backend/lib/agent_backend_web/live/chat_live.html.heex` | Message rendering, held-draft revision UX, cancel/reload/branch UI     |
+| `erlang_backend/lib/agent_backend_web/controllers/branch_controller.ex` | Fork chat at message index → new session + redirect              |
 | `erlang_backend/lib/agent_backend/agent_loop.ex`                | Stream → validate → revise loop                                        |
 | `erlang_backend/lib/agent_backend/open_router.ex`               | OpenRouter streaming + non-streaming client                            |
 | `erlang_backend/lib/agent_backend/tools.ex`                     | Extensible tool registry                                               |
 | `erlang_backend/lib/agent_backend/tools/output_validator.ex`    | LLM fact-checker tool                                                  |
 | `erlang_backend/lib/agent_backend/chat_sessions.ex`             | Serialized file-backed chat persistence (`priv/chat_sessions/*.json`)  |
-| `erlang_backend/lib/agent_backend/agent_runs.ex`                | Single-flight agent run registry (one run per chat)                    |
+| `erlang_backend/lib/agent_backend/agent_runs.ex`                | Single-flight + live stream hub + cancelable runner PID                |
 | `erlang_backend/lib/agent_backend/slack.ex`                     | Slack Web API client (`chat.postMessage`)                              |
 | `erlang_backend/lib/agent_backend/slack_monitor.ex`             | Async GenServer: one Slack thread per chat, error alerts               |
 | `erlang_backend/lib/agent_backend/system_prompt.ex`             | Loads `prompt.md` from repo root                                       |
@@ -89,6 +90,39 @@ Session JSON may also include `slack_thread_ts` — preserved across `save/2` un
 ### Agent single-flight
 
 `AgentBackend.AgentRuns` allows at most one agent Task per `chat_id`. New sends while busy are no-ops. PubSub events are tagged with `run_id`; LiveViews ignore stale runs.
+
+Hub entry also stores `runner_pid` (outer Task process) so cancel can kill the run. `finish/2` returns `:ok` when it clears the entry or `:already_done` if already cancelled/finished — completion paths must claim ownership before persisting so a late reply cannot overwrite a cancelled transcript.
+
+### Cancel (Stop)
+
+While `is_loading`, the send button is replaced by **Stop** (`phx-click="cancel_run"`).
+
+1. `AgentRuns.cancel(chat_id, run_id)` settles messages (keep non-empty partial assistant; drop empty placeholder), kills `runner_pid`, frees single-flight.
+2. LiveView saves settled messages to `ChatSessions` and broadcasts idle `stream_state` (no Slack error log; no partial assistant Slack post).
+3. Runner must not treat cancel as timeout/crash: `set_error` / `persist_*` only when the run still owns the hub (`finish` / `set_error` not `:ignore` / `:already_done`).
+
+Do **not** implement cancel via `window.open` or client-only flags — the Task is not owned by the LiveView pid.
+
+### Reload (regenerate last only)
+
+`reload_message` regenerates **only the last assistant** turn (index must be `length(messages) - 1`). Context is `Enum.take(messages, idx)` (everything before that assistant). Mid-thread regenerate is intentionally disallowed so later turns are never wiped — use **Branch** instead.
+
+Error “Try again” is the same event, last index only.
+
+### Branch (fork to new chat)
+
+Any message with content can **Branch** via a real link (not LiveView `push_event` + `window.open` — async open is popup-blocked):
+
+```
+GET /branch/:chat_id/:index  →  BranchController.create/2
+```
+
+1. Load messages from hub live state if active, else `ChatSessions`.
+2. Fork `Enum.take(messages, index + 1)` (inclusive of branched message).
+3. Save new id; `302` redirect to `/c/:new_id`.
+4. UI: `<a href="/branch/#{chat_id}/#{idx}" target="_blank" rel="noopener noreferrer">`.
+
+Original chat is unchanged. Do not reintroduce LiveView-only branch openers.
 
 ### Slack monitoring
 
@@ -208,6 +242,9 @@ mix assets.deploy   # above + phx.digest (production)
 | Using `push_navigate` for first-message URL update                 | Remounts LiveView and disrupts streaming                                 |
 | Running `docker compile` as root without fixing `_build` ownership | Leaves root-owned files; breaks local `mix compile`                      |
 | Adding deterministic validation rules                              | User wants pure LLM validator; prompt changes must not fight code checks |
+| Opening branch via LiveView `push_event` + `window.open`           | Popup-blocked after async round-trip; use `GET /branch/...` + `target=_blank` |
+| Allowing reload on non-last assistants                             | Wipes later turns; mid-thread exploration is Branch only                 |
+| Cancelling without claiming hub (`finish` / ignore race)           | Late full reply or error can overwrite settled partial                   |
 
 ## Testing changes
 
@@ -221,7 +258,7 @@ mix test
 mix assets.build    # or assets.deploy for prod-style digest
 ```
 
-Tests use **fakes** for OpenRouter (`:llm`) and Slack (`:slack`) via `config/test.exs` — no API keys required. Support code lives in `test/support/` (`LLM.Fake`, `Slack.Fake`, Conn/Live cases). Core coverage includes AgentLoop, AgentRuns hub, ChatSessions, multi-tab stream sync, SlackMonitor, LiveView send/join/error, health/404.
+Tests use **fakes** for OpenRouter (`:llm`) and Slack (`:slack`) via `config/test.exs` — no API keys required. Support code lives in `test/support/` (`LLM.Fake`, `Slack.Fake`, Conn/Live cases). Core coverage includes AgentLoop, AgentRuns hub (cancel/finish ownership), ChatSessions, multi-tab stream sync, SlackMonitor, LiveView send/join/error/cancel/reload, BranchController, health/404.
 
 Only after green tests:
 
@@ -231,9 +268,12 @@ Only after green tests:
 4. Agent: check logs for `AgentLoop validation passed/failed`, `OutputValidator completed in Xms`
 5. Concurrent safety: second tab on same `/c/:id` mid-stream must not wipe history after done
 6. Revision UX: validation fail should show held draft + revise status + crossfade
-7. Slack (if configured): new chat creates monitor-channel thread; user + agent replies appear as thread messages; errors go to errors channel only
+7. Cancel: Stop mid-stream keeps partial (or drops empty), send works again; no Slack error
+8. Reload: only last assistant; mid-thread has Branch link only
+9. Branch: opens new tab at `/c/:newId` with prefix history; original chat unchanged
+10. Slack (if configured): new chat creates monitor-channel thread; user + agent replies appear as thread messages; errors go to errors channel only
 
-Regression tests live under `erlang_backend/test/` (ChatSessions refuse-empty, AgentRuns single-flight, sanitizer, tools).
+Regression tests live under `erlang_backend/test/` (ChatSessions refuse-empty, AgentRuns single-flight/cancel, BranchController, sanitizer, tools).
 
 ## Deployment context
 
@@ -245,12 +285,14 @@ Regression tests live under `erlang_backend/test/` (ChatSessions refuse-empty, A
 
 Read before editing:
 
-1. `erlang_backend/lib/agent_backend_web/live/chat_live.ex` — main behavior
-2. `erlang_backend/lib/agent_backend/agent_loop.ex` — stream/validate/revise loop
-3. `erlang_backend/lib/agent_backend/tools/output_validator.ex` — validator prompt
-4. `erlang_backend/lib/agent_backend/chat_sessions.ex` — persistence format
-5. `erlang_backend/lib/agent_backend/slack_monitor.ex` — Slack thread lifecycle
-6. `erlang_backend/lib/agent_backend_web/endpoint.ex` — HTTP/WebSocket/static setup
+1. `erlang_backend/lib/agent_backend_web/live/chat_live.ex` — main behavior (send/cancel/reload)
+2. `erlang_backend/lib/agent_backend/agent_runs.ex` — single-flight, live hub, cancel
+3. `erlang_backend/lib/agent_backend/agent_loop.ex` — stream/validate/revise loop
+4. `erlang_backend/lib/agent_backend/tools/output_validator.ex` — validator prompt
+5. `erlang_backend/lib/agent_backend/chat_sessions.ex` — persistence format
+6. `erlang_backend/lib/agent_backend_web/controllers/branch_controller.ex` — fork to new chat
+7. `erlang_backend/lib/agent_backend/slack_monitor.ex` — Slack thread lifecycle
+8. `erlang_backend/lib/agent_backend_web/endpoint.ex` — HTTP/WebSocket/static setup
 
 Keep changes scoped. Do not refactor unrelated modules. Do not commit secrets or personal prompt content.
 
