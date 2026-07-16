@@ -279,7 +279,7 @@ defmodule AgentBackendWeb.ChatLiveTest do
     assert render(view) =~ "a2 regenerated"
   end
 
-  test "branch link is present on messages when chat has an id", %{conn: conn} do
+  test "branch link is present only on agent messages when chat has an id", %{conn: conn} do
     chat = unique_chat_id()
 
     history = [
@@ -290,7 +290,9 @@ defmodule AgentBackendWeb.ChatLiveTest do
     assert :ok = ChatSessions.save(chat, history)
     {:ok, view, _html} = live(conn, "/c/#{chat}")
 
-    assert has_element?(view, ~s(a[href="/branch/#{chat}/0"][target="_blank"]))
+    # User turns: no branch control
+    refute has_element?(view, ~s(a[href="/branch/#{chat}/0"][target="_blank"]))
+    # Assistant turns: branch link opens in a new tab
     assert has_element?(view, ~s(a[href="/branch/#{chat}/1"][target="_blank"]))
   end
 
