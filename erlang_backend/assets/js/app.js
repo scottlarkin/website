@@ -133,6 +133,15 @@ function handleCopyLink(btn) {
     .catch(() => flashCopyLabel(label, "Failed"))
 }
 
+function handleCopyMessage(btn) {
+  const text = btn.dataset.copyText || ""
+  if (!text) return
+  const label = btn.querySelector("[data-copy-label]")
+  copyToClipboard(text)
+    .then(() => flashCopyLabel(label, "Copied"))
+    .catch(() => flashCopyLabel(label, "Failed"))
+}
+
 function initChatUx(root = document) {
   root.querySelectorAll("[data-suggestion-typewriter]").forEach((el) => startTypewriter(el))
 }
@@ -266,6 +275,13 @@ window.addEventListener("phx:page-loading-stop", _info => {
 liveSocket.connect()
 
 document.addEventListener("click", (e) => {
+  const copyMsg = e.target.closest("[data-copy-message]")
+  if (copyMsg) {
+    e.preventDefault()
+    handleCopyMessage(copyMsg)
+    return
+  }
+
   const copyBtn = e.target.closest("#copy-link-btn, [data-copy-link]")
   if (!copyBtn) return
   e.preventDefault()

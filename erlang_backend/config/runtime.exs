@@ -48,13 +48,23 @@ if config_env() == :prod do
     """
   end
 
+  public_host = host || "scott.larkin.cc"
+
   config :agent_backend, AgentBackendWeb.Endpoint,
     url: [
-      host: host || "scott.larkin.cc",
+      host: public_host,
       port: 443,
       scheme: "https"
     ],
     secret_key_base: secret_key_base,
     live_view: [signing_salt: live_view_salt],
-    server: true
+    server: true,
+    # Restrict LiveView WebSocket origins in production
+    check_origin: [
+      "//#{public_host}",
+      "https://#{public_host}",
+      "http://localhost:3000",
+      "http://127.0.0.1:3000"
+    ]
 end
+

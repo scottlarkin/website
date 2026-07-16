@@ -278,8 +278,8 @@ defmodule AgentBackend.OpenRouter do
 
         updated =
           existing
-          |> maybe_put(:id, call["id"])
-          |> maybe_put(:name, get_in(call, ["function", "name"]))
+          |> maybe_put_field(:id, call["id"])
+          |> maybe_put_field(:name, get_in(call, ["function", "name"]))
           |> append_arguments(get_in(call, ["function", "arguments"]))
 
         Map.put(tool_acc, index, updated)
@@ -296,8 +296,8 @@ defmodule AgentBackend.OpenRouter do
 
   defp append_arguments(existing, _), do: existing
 
-  defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, key, val), do: Map.put(map, key, val)
+  defp maybe_put_field(map, _key, nil), do: map
+  defp maybe_put_field(map, key, val), do: Map.put(map, key, val)
 
   defp put_finish_reason(acc, finish) when is_binary(finish), do: %{acc | finish_reason: finish}
   defp put_finish_reason(acc, _), do: acc

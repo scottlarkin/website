@@ -20,7 +20,8 @@ The chat uses an **agent loop**: stream a draft reply, run an LLM-backed `output
 | `erlang_backend/lib/agent_backend/open_router.ex`               | OpenRouter streaming + non-streaming client                            |
 | `erlang_backend/lib/agent_backend/tools.ex`                     | Extensible tool registry                                               |
 | `erlang_backend/lib/agent_backend/tools/output_validator.ex`    | LLM fact-checker tool                                                  |
-| `erlang_backend/lib/agent_backend/chat_sessions.ex`             | File-backed chat persistence (`priv/chat_sessions/*.json`)             |
+| `erlang_backend/lib/agent_backend/chat_sessions.ex`             | Serialized file-backed chat persistence (`priv/chat_sessions/*.json`)  |
+| `erlang_backend/lib/agent_backend/agent_runs.ex`                | Single-flight agent run registry (one run per chat)                    |
 | `erlang_backend/lib/agent_backend/slack.ex`                     | Slack Web API client (`chat.postMessage`)                              |
 | `erlang_backend/lib/agent_backend/slack_monitor.ex`             | Async GenServer: one Slack thread per chat, error alerts               |
 | `erlang_backend/lib/agent_backend/system_prompt.ex`             | Loads `prompt.md` from repo root                                       |
@@ -75,11 +76,19 @@ Requires `.env` at repo root and `prompt.md` for full functionality.
 
 ### Chat persistence
 
-`ChatLive` → `AgentBackend.ChatSessions` → JSON files in `priv/chat_sessions/<id>.json`
+`ChatLive` → `AgentBackend.ChatSessions` (GenServer) → JSON files in `priv/chat_sessions/<id>.json`
 
-On load/sync, trailing **empty assistant placeholders** (orphaned from interrupted streams) are dropped and the file is rewritten.
+- Writes are serialized and atomic (`*.tmp` + rename)
+- **Task owns final disk state** (`persist_assistant_reply` / `persist_error_assistant`). LiveViews must **not** save full history on `stream_done` / per-token
+- Empty overwrite of a non-empty transcript is **refused** (`{:error, :refuse_empty}`)
+- Chat ids must match `^[A-Za-z0-9]{6,12}$`
+- On load/sync, trailing empty assistant placeholders are dropped **in memory only** while a run is active (never rewrite disk mid-stream)
 
-Session JSON may also include `slack_thread_ts` (Slack thread parent timestamp) — preserved across `save/2` calls.
+Session JSON may also include `slack_thread_ts` — preserved across `save/2` under the same lock.
+
+### Agent single-flight
+
+`AgentBackend.AgentRuns` allows at most one agent Task per `chat_id`. New sends while busy are no-ops. PubSub events are tagged with `run_id`; LiveViews ignore stale runs.
 
 ### Slack monitoring
 
@@ -202,14 +211,27 @@ mix assets.deploy   # above + phx.digest (production)
 
 ## Testing changes
 
-1. `mix compile` in `erlang_backend/`
-2. Rebuild assets if JS/CSS changed
-3. Dev: `./scripts/dev-server.sh` (3001). Prod: `systemctl --user restart agent-backend.service` (3000)
-4. Verify: `curl http://localhost:3001/health` (dev) or `:3000/health` (prod)
-5. Manual: start chat from `/`, confirm URL becomes `/c/:id`, reload shows messages, idle/reconnect does not wipe UI
-6. Agent: check logs for `AgentLoop validation passed/failed`, `OutputValidator completed in Xms`
-7. Revision UX: validation fail should show held draft + "Improving accuracy…" + crossfade
-8. Slack (if configured): new chat creates monitor-channel thread; user + agent replies appear as thread messages; errors go to errors channel only
+**Always run tests (and compile) before starting or restarting any server.** Do not skip this to “save time.”
+
+```bash
+cd erlang_backend
+mix compile
+mix test
+# If JS/CSS changed:
+mix assets.build    # or assets.deploy for prod-style digest
+```
+
+Only after green tests:
+
+1. Dev: `./scripts/dev-server.sh` (3001). Prod: `systemctl --user restart agent-backend.service` (3000)
+2. Verify: `curl http://localhost:3001/health` (dev) or `:3000/health` (prod)
+3. Manual: start chat from `/`, confirm URL becomes `/c/:id`, reload shows messages, idle/reconnect does not wipe UI
+4. Agent: check logs for `AgentLoop validation passed/failed`, `OutputValidator completed in Xms`
+5. Concurrent safety: second tab on same `/c/:id` mid-stream must not wipe history after done
+6. Revision UX: validation fail should show held draft + revise status + crossfade
+7. Slack (if configured): new chat creates monitor-channel thread; user + agent replies appear as thread messages; errors go to errors channel only
+
+Regression tests live under `erlang_backend/test/` (ChatSessions refuse-empty, AgentRuns single-flight, sanitizer, tools).
 
 ## Deployment context
 

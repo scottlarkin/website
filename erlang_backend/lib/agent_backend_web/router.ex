@@ -12,13 +12,17 @@ defmodule AgentBackendWeb.Router do
     plug :put_secure_browser_headers
   end
 
-  scope "/", AgentBackendWeb do
-      pipe_through :browser
-
-      live "/c/:id", ChatLive, :show
-      live "/", ChatLive, :show
-      live "/chat", ChatLive, :show
-    end
-
+  # Before catch-all
   get "/health", AgentBackendWeb.HealthController, :index
+
+  scope "/", AgentBackendWeb do
+    pipe_through :browser
+
+    live "/c/:id", ChatLive, :show
+    live "/", ChatLive, :show
+    live "/chat", ChatLive, :show
+
+    # Custom 404 (avoids Phoenix debug NoRouteError page in dev)
+    get "/*path", FallbackController, :not_found
+  end
 end

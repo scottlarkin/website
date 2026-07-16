@@ -1,30 +1,30 @@
 defmodule AgentBackendWeb.TypingLines do
   @moduledoc false
 
+  # No trailing ellipsis — the UI already shows animated dots beside these.
   @lines [
-    "Checking notes…",
-    "Pulling up the Trinny era…",
-    "Scanning the Splyt widget days…",
-    "Remembering Midrive lesson patterns…",
-    "Dusting off the WoW addon story…",
-    "Reviewing the skills list…",
-    "Thinking about agent loops…",
-    "Flipping through the CV…",
-    "Gathering thoughts on London remote…",
-    "Consulting the system prompt…",
-    "Cross-referencing the Elixir notes…",
-    "Pulling up Phoenix patterns…",
-    "Scanning the TypeScript stack…",
-    "Walking the React component tree…",
-    "Tracing the agent loop wiring…",
-    "Looking up MCP server notes…",
-    "Paging through Postgres schemas…",
-    "Checking the LiveView socket…",
-    "Reviewing the Docker setup…",
-    "Dusting off the CI pipeline…",
-    "Thinking in full stack…",
-    "Matching skills to the question…",
-    "Pulling relevant tech from the stack…"
+    "Checking notes",
+    "Reviewing the skills list",
+    "Thinking about agent loops",
+    "Flipping through the CV",
+    "Consulting the system prompt",
+    "Pulling up Phoenix patterns",
+    "Scanning the TypeScript stack",
+    "Walking the React component tree",
+    "Tracing the agent loop wiring",
+    "Looking up MCP server notes",
+    "Paging through Postgres schemas",
+    "Checking the LiveView socket",
+    "Reviewing the Docker setup",
+    "Dusting off the CI pipeline",
+    "Matching skills to the question",
+    "Pulling relevant tech from the stack",
+    "Rereading the deployment notes",
+    "Tracing a WebSocket reconnect path",
+    "Skimming the architecture sketch",
+    "Double-checking the stack choice",
+    "Opening the project footnotes",
+    "Lining up a straight answer"
   ]
 
   def lines, do: @lines

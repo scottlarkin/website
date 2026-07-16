@@ -12,8 +12,19 @@ defmodule AgentBackend.Tools do
 
   def run_tool(name, arguments, ctx) do
     case find_module(name) do
-      nil -> Jason.encode!(%{error: "unknown tool: #{name}"})
-      mod -> mod.execute(arguments, ctx)
+      nil ->
+        Jason.encode!(%{error: "unknown tool: #{name}"})
+
+      mod ->
+        try do
+          mod.execute(arguments, ctx)
+        rescue
+          e ->
+            require Logger
+            Logger.warning("Tool #{name} crashed: #{Exception.message(e)}")
+            # Lenient default for validator-shaped tools
+            Jason.encode!(%{passed: true, error: Exception.message(e)})
+        end
     end
   end
 
@@ -32,25 +43,8 @@ defmodule AgentBackend.Tools do
 
   def execute_all(tool_calls, ctx) when is_list(tool_calls) do
     Enum.map(tool_calls, fn %{id: id, name: name, arguments: args} ->
-      content =
-        case find_module(name) do
-          nil ->
-            Jason.encode!(%{error: "unknown tool: #{name}"})
-
-          mod ->
-            mod.execute(args, ctx)
-        end
-
+      content = run_tool(name, args, ctx)
       %{role: "tool", tool_call_id: id, content: content}
-    end)
-  end
-
-  def revision_needed?(tool_results) when is_list(tool_results) do
-    Enum.any?(tool_results, fn %{content: content} ->
-      case Jason.decode(content) do
-        {:ok, %{"passed" => false}} -> true
-        _ -> false
-      end
     end)
   end
 

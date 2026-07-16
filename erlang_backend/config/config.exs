@@ -8,7 +8,11 @@ config :agent_backend, AgentBackendWeb.Endpoint,
   url: [host: "localhost", port: 3000],
   server: true,
   root: ".",
-  check_origin: false
+  check_origin: false,
+  render_errors: [
+    formats: [html: AgentBackendWeb.ErrorView, json: AgentBackendWeb.ErrorView],
+    layout: false
+  ]
 
 # Static asset configuration
 config :esbuild,
