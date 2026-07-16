@@ -91,38 +91,40 @@ html, body {
 }
 
 /*
- * iOS Safari zooms focused form controls when computed font-size < 16px.
- * Pair with maximum-scale=1 viewport (root layout + lockIOSViewport in app.js).
+ * Composer input — pure CSS only (no JS caret).
+ * caret-color: all modern browsers (app sky #38bdf8).
+ * caret-shape: block — Firefox; ignored elsewhere (falls back to thin bar).
  */
-input[type="text"],
-input[type="number"],
-input[type="email"],
-input[type="search"],
-input[type="tel"],
-input[type="url"],
-input[type="password"],
-textarea,
-select {
-  font-size: 16px !important;
-}
-
-/* Terminal composer input — real visible text, native caret styled as block */
-.terminal-input {
-  font-family: inherit;
-  font-size: inherit; /* 16px from the rule above */
-  color: #e4e4e7;
+input[name="message"] {
+  /* lock glyph width so a block caret lines up with mono text */
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
+  letter-spacing: 0;
   caret-color: #38bdf8;
-  /* Block caret where supported (Firefox; ignored elsewhere) */
   caret-shape: block;
 }
 
-.terminal-prompt-char {
-  font-size: 16px;
+input[name="message"]::placeholder {
+  color: #3f3f46;
+  opacity: 1;
+}
+input[name="message"]::-webkit-input-placeholder {
+  color: #3f3f46;
+  opacity: 1;
 }
 
-/* Desktop: Enter sends; no send button. Mobile: show [send]. */
-.mobile-only-send {
-  display: none;
+/* Prefer block caret when the engine supports the property (progressive). */
+@supports (caret-shape: block) {
+  input[name="message"] {
+    caret-shape: block;
+  }
+}
+
+/* Desktop: Enter sends. Mobile: show [send].
+   !important beats .term-btn { display: inline-flex }. */
+button.mobile-only-send {
+  display: none !important;
 }
 
 @media (max-width: 767px) {
@@ -131,18 +133,8 @@ select {
     text-size-adjust: 100%;
   }
 
-  .mobile-only-send {
-    display: inline-flex;
-  }
-
-  .chat-composer {
-    padding-bottom: max(0.75rem, env(safe-area-inset-bottom, 0px));
-  }
-
-  #chat-root {
-    overscroll-behavior-x: none;
-    overflow: hidden;
-    touch-action: pan-y;
+  button.mobile-only-send {
+    display: inline-flex !important;
   }
 
   #messages {
@@ -212,7 +204,8 @@ select {
 
 .term-prompt {
   flex-shrink: 0;
-  width: 1ch;
+  /* ❯ is wider than a mono ">"; 1ch clipped it */
+  width: 1.25ch;
   font-size: inherit;
   font-weight: 400;
   line-height: inherit;
@@ -472,24 +465,4 @@ select {
   justify-content: center;
   padding: 0;
   font-size: 0.75rem;
-}
-
-/* Cursor-local button glow — painted in JS */
-.btn-glow {
-  position: relative;
-  overflow: hidden;
-}
-
-.btn-glow-fx {
-  position: absolute;
-  inset: 0;
-  border-radius: 0;
-  pointer-events: none;
-  opacity: 0;
-  z-index: 0;
-}
-
-.btn-glow > :not(.btn-glow-fx) {
-  position: relative;
-  z-index: 1;
 }

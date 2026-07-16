@@ -7,9 +7,6 @@ import "../vendor/topbar.js"
 
 let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content")
 
-const STUCK_SUBMIT_MS = 12_000
-const RELOAD_FALLBACK_MS = 5_000
-
 function decodeAttrValue(raw) {
   if (!raw) return ""
   const ta = document.createElement("textarea")
@@ -154,35 +151,6 @@ function hideReconnectBanner() {
   document.querySelector("[data-reconnect-banner]")?.classList.add("hidden")
 }
 
-// Touch / narrow viewport — relax "always focus" so iOS Done can dismiss the KB.
-function isMobileUi() {
-  if (typeof window === "undefined") return false
-  if (window.matchMedia("(max-width: 767px)").matches) return true
-  if (window.matchMedia("(pointer: coarse)").matches && window.innerWidth < 1024) return true
-  return false
-}
-
-function isIOS() {
-  if (typeof navigator === "undefined") return false
-  const ua = navigator.userAgent || ""
-  if (/iPad|iPhone|iPod/.test(ua)) return true
-  // iPadOS 13+ reports as Mac with touch
-  return navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1
-}
-
-// Keep scale locked on iOS/mobile. Do NOT toggle this on blur — that caused zoom jumps.
-function lockIOSViewport() {
-  if (!isIOS() && !isMobileUi()) return
-  const meta = document.querySelector('meta[name="viewport"]')
-  if (!meta) return
-  meta.setAttribute(
-    "content",
-    "width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
-  )
-}
-
-lockIOSViewport()
-
 let Hooks = {
   AutoScroll: {
     mounted() {
@@ -197,7 +165,11 @@ let Hooks = {
       this.observer?.disconnect()
     },
     scrollToBottom() {
+      const active = document.activeElement
+      if (active && active.tagName === "INPUT" && active.name === "message") return
       requestAnimationFrame(() => {
+        const again = document.activeElement
+        if (again && again.tagName === "INPUT" && again.name === "message") return
         this.el.scrollTop = this.el.scrollHeight
       })
     }
@@ -221,259 +193,8 @@ let Hooks = {
 
       this.hadHeldDraft = !!held
     }
-  },
-
-  ChatForm: {
-    mounted() {
-      this.watchdog = null
-      this.reloadTimer = null
-      this.blurTimer = null
-      this.caretTimer = null
-      this.shouldRefocus = false
-      this.holdBlur = false
-      this.getInput = () => this.el.querySelector("#chat-input")
-      this.focusInput = () => {
-        const input = this.getInput()
-        if (!input) return
-        if (document.activeElement !== input) input.focus({preventScroll: true})
-        syncBlockCaret()
-      }
-      this.syncCaret = () => syncBlockCaret()
-      this.onSubmit = () => {
-        this.shouldRefocus = true
-        this.startWatchdog()
-      }
-      this.onPointerDown = (e) => {
-        const interactive = e.target.closest(
-          "a, button, textarea, select, [contenteditable='true']"
-        )
-        const input = this.getInput()
-        this.holdBlur = !!(interactive && interactive !== input)
-        if (!this.holdBlur) {
-          // Don't preventDefault on mobile — it can break keyboard / focus timing
-          if (!isMobileUi() && e.target !== input) e.preventDefault()
-          this.focusInput()
-        }
-      }
-      this.onPointerUp = () => {
-        if (this.holdBlur) {
-          this.holdBlur = false
-          // Desktop: reclaim after button click. Mobile: leave focus alone.
-          if (!isMobileUi()) this.focusInput()
-        }
-      }
-      this.onBlur = () => {
-        if (this.blurTimer) clearTimeout(this.blurTimer)
-        this.blurTimer = setTimeout(() => {
-          this.blurTimer = null
-          if (this.holdBlur) return
-
-          // Mobile: honor Done — stay blurred (desktop keeps always-focus).
-          if (isMobileUi() || isIOS()) {
-            lockIOSViewport()
-            window.scrollTo(0, 0)
-            return
-          }
-
-          this.focusInput()
-        }, 50)
-      }
-      this.onKeyDown = (e) => {
-        const input = this.getInput()
-        if (!input) return
-        if (e.metaKey || e.ctrlKey || e.altKey) return
-        if (e.key === "Tab") return
-        if (e.isComposing) return
-
-        const focused = document.activeElement === input
-        const printable = e.key.length === 1
-        const editKey =
-          printable ||
-          e.key === "Backspace" ||
-          e.key === "Delete" ||
-          e.key === "Enter" ||
-          e.key === "ArrowLeft" ||
-          e.key === "ArrowRight" ||
-          e.key === "Home" ||
-          e.key === "End"
-
-        if (!editKey) return
-
-        // Desktop-only: steal keystrokes into the composer when unfocused
-        if (!focused && !isMobileUi()) {
-          input.focus({preventScroll: true})
-          if (printable) {
-            e.preventDefault()
-            const start = input.selectionStart ?? input.value.length
-            const end = input.selectionEnd ?? input.value.length
-            input.value = input.value.slice(0, start) + e.key + input.value.slice(end)
-            const next = start + e.key.length
-            input.setSelectionRange(next, next)
-            input.dispatchEvent(new Event("input", {bubbles: true}))
-          }
-        }
-        requestAnimationFrame(() => this.syncCaret())
-      }
-      this.onCaretSync = () => this.syncCaret()
-      this.el.addEventListener("submit", this.onSubmit)
-      document.addEventListener("pointerdown", this.onPointerDown, true)
-      document.addEventListener("pointerup", this.onPointerUp, true)
-      document.addEventListener("keydown", this.onKeyDown, true)
-
-      const input = this.getInput()
-      if (input) {
-        input.addEventListener("blur", this.onBlur)
-        for (const ev of ["input", "keyup", "keydown", "click", "select", "focus", "scroll"]) {
-          input.addEventListener(ev, this.onCaretSync)
-        }
-      }
-      this.caretTimer = setInterval(() => this.syncCaret(), 50)
-      // Desktop: always focused. Mobile: wait for tap.
-      if (!isMobileUi()) this.focusInput()
-      this.syncCaret()
-    },
-    destroyed() {
-      this.clearTimers()
-      if (this.blurTimer) clearTimeout(this.blurTimer)
-      if (this.caretTimer) clearInterval(this.caretTimer)
-      this.el.removeEventListener("submit", this.onSubmit)
-      document.removeEventListener("pointerdown", this.onPointerDown, true)
-      document.removeEventListener("pointerup", this.onPointerUp, true)
-      document.removeEventListener("keydown", this.onKeyDown, true)
-      const input = this.getInput()
-      if (input) {
-        input.removeEventListener("blur", this.onBlur)
-        for (const ev of ["input", "keyup", "keydown", "click", "select", "focus", "scroll"]) {
-          input.removeEventListener(ev, this.onCaretSync)
-        }
-      }
-    },
-    updated() {
-      if (!this.el.classList.contains("phx-submit-loading")) {
-        this.clearTimers()
-      }
-      const afterSubmit = this.shouldRefocus
-      this.shouldRefocus = false
-
-      if (isMobileUi()) {
-        // After send, refocus so the user can keep typing.
-        // Never force-focus on stream ticks if they dismissed the keyboard.
-        if (afterSubmit) this.focusInput()
-      } else {
-        this.focusInput()
-      }
-      this.syncCaret()
-    },
-    disconnected() {
-      showReconnectBanner()
-    },
-    reconnected() {
-      hideReconnectBanner()
-      this.pushEvent("sync_state", {})
-    },
-    startWatchdog() {
-      this.clearTimers()
-      const baselineCount = document.querySelectorAll("#messages [id^='msg-']").length
-
-      this.watchdog = setTimeout(() => {
-        if (!this.isStuck(baselineCount)) return
-        window.liveSocket.reconnect()
-        this.reloadTimer = setTimeout(() => {
-          if (this.isStuck(baselineCount)) {
-            window.location.reload()
-          }
-        }, RELOAD_FALLBACK_MS)
-      }, STUCK_SUBMIT_MS)
-    },
-    isStuck(baselineCount) {
-      if (!this.el.classList.contains("phx-submit-loading")) return false
-      const msgCount = document.querySelectorAll("#messages [id^='msg-']").length
-      return msgCount <= baselineCount
-    },
-    clearTimers() {
-      if (this.watchdog) {
-        clearTimeout(this.watchdog)
-        this.watchdog = null
-      }
-      if (this.reloadTimer) {
-        clearTimeout(this.reloadTimer)
-        this.reloadTimer = null
-      }
-    }
   }
 }
-
-// Caret mirror removed — native visible input + caret-color/shape in CSS.
-function syncBlockCaret() {
-  // no-op (kept so ChatForm hook calls stay safe)
-}
-
-// --- Button glow: fixed spotlight that follows the mouse over .btn-glow ---
-let mouseGlowEl = null
-function ensureMouseGlow() {
-  if (mouseGlowEl && mouseGlowEl.isConnected) return mouseGlowEl
-  mouseGlowEl = document.createElement("div")
-  mouseGlowEl.id = "mouse-glow"
-  mouseGlowEl.setAttribute("aria-hidden", "true")
-  mouseGlowEl.style.cssText = [
-    "position:fixed",
-    "width:96px",
-    "height:96px",
-    "margin:0",
-    "padding:0",
-    "border-radius:50%",
-    "pointer-events:none",
-    "z-index:99999",
-    "transform:translate(-50%,-50%)",
-    "display:none",
-    "background:radial-gradient(circle,rgba(56,189,248,0.9) 0%,rgba(56,189,248,0.35) 40%,transparent 70%)",
-    "mix-blend-mode:screen"
-  ].join(";")
-  document.body.appendChild(mouseGlowEl)
-  return mouseGlowEl
-}
-
-function trackBtnGlow(e) {
-  const mx = e.clientX
-  const my = e.clientY
-  const spot = ensureMouseGlow()
-  let overBtn = null
-
-  document.querySelectorAll(".btn-glow").forEach((btn) => {
-    const rect = btn.getBoundingClientRect()
-    if (rect.width <= 0 || rect.height <= 0) return
-    const lx = mx - rect.left
-    const ly = my - rect.top
-    const inside = lx >= 0 && ly >= 0 && lx <= rect.width && ly <= rect.height
-
-    if (inside) {
-      overBtn = btn
-      const danger = btn.classList.contains("btn-glow-danger")
-      const rgb = danger ? "251,113,133" : "56,189,248"
-      // In-button fill (above Tailwind background-color)
-      btn.style.backgroundImage =
-        `radial-gradient(circle 18px at ${lx}px ${ly}px, rgba(255,255,255,0.95), transparent 65%),` +
-        `radial-gradient(circle 44px at ${lx}px ${ly}px, rgba(${rgb},0.85), transparent 70%)`
-    } else {
-      btn.style.removeProperty("background-image")
-    }
-  })
-
-  if (overBtn) {
-    const danger = overBtn.classList.contains("btn-glow-danger")
-    spot.style.background = danger
-      ? "radial-gradient(circle,rgba(251,113,133,0.95) 0%,rgba(251,113,133,0.35) 40%,transparent 70%)"
-      : "radial-gradient(circle,rgba(56,189,248,0.95) 0%,rgba(56,189,248,0.35) 40%,transparent 70%)"
-    spot.style.left = `${mx}px`
-    spot.style.top = `${my}px`
-    spot.style.display = "block"
-  } else {
-    spot.style.display = "none"
-  }
-}
-
-document.addEventListener("pointermove", trackBtnGlow, {passive: true})
-document.addEventListener("mousemove", trackBtnGlow, {passive: true})
 
 let liveSocket = new LiveSocket("/live", Socket, {
   params: {_csrf_token: csrfToken},
@@ -489,6 +210,7 @@ window.addEventListener("phx:page-loading-stop", _info => {
 
 liveSocket.connect()
 
+// Copy buttons only — never touch the composer.
 document.addEventListener("click", (e) => {
   const copyMsg = e.target.closest("[data-copy-message]")
   if (copyMsg) {
@@ -501,20 +223,7 @@ document.addEventListener("click", (e) => {
   if (!copyBtn) return
   e.preventDefault()
   handleCopyLink(copyBtn)
-}, true)
-
-document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") {
-    document.getElementById("chat-input")?.focus()
-    return
-  }
-
-  const mod = e.metaKey || e.ctrlKey
-  if (mod && e.key.toLowerCase() === "k") {
-    e.preventDefault()
-    document.getElementById("new-chat-btn")?.click()
-  }
-}, true)
+})
 
 function observeChatUx() {
   const messages = document.getElementById("messages")
@@ -538,11 +247,4 @@ document.addEventListener("visibilitychange", () => {
   }
 })
 
-window.addEventListener("focus", () => {
-  if (!liveSocket.isConnected()) {
-    liveSocket.reconnect()
-  }
-})
-
 window.liveSocket = liveSocket
-// build 1784235473

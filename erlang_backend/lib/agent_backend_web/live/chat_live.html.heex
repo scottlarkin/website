@@ -24,10 +24,9 @@
           id="copy-link-btn"
           data-copy-link
           data-copy-url={AgentBackendWeb.Endpoint.url() <> "/c/#{@chat_id}"}
-          class="btn-glow term-btn"
+          class="term-btn"
           title="Copy chat link"
         >
-          <span class="btn-glow-fx" aria-hidden="true"></span>
           <span data-copy-label>share</span>
         </button>
       <% end %>
@@ -35,10 +34,9 @@
       <button
         phx-click="new_chat"
         id="new-chat-btn"
-        class="btn-glow term-btn"
+        class="term-btn"
         title="New chat (⌘K)"
       >
-        <span class="btn-glow-fx" aria-hidden="true"></span>
         <span>new</span>
       </button>
     </div>
@@ -62,7 +60,7 @@
         >
           <h2 class="text-xl font-semibold text-zinc-100 tracking-tight">Hi, I'm Scott.</h2>
           <p class="terminal-mono mt-3 max-w-sm text-sm text-zinc-500">
-            <span class="text-zinc-600">&gt; </span><span data-typewriter></span><span data-cursor class="text-sky-400/90 animate-pulse">▌</span>
+            <span class="text-zinc-600">❯ </span><span data-typewriter></span><span data-cursor class="text-sky-400/90 animate-pulse">▌</span>
           </p>
           <p class="mt-2 max-w-sm text-xs text-zinc-600 leading-relaxed">
             I answer questions about my work — skills, projects, and how to reach me.
@@ -105,7 +103,7 @@
                 <span
                   class={"term-prompt " <> if(message_error?(message), do: "text-rose-400/80", else: "term-prompt-agent")}
                   aria-hidden="true"
-                >&gt;</span>
+                >❯</span>
                 <div class="term-body-agent">
                   <%= if message_error?(message) do %>
                     <div class="space-y-1 text-rose-200/90">
@@ -227,53 +225,47 @@
       <% end %>
     </div>
 
-    <!-- Input -->
-    <div class="chat-composer shrink-0 bg-zinc-950 px-4 pb-3 pt-1">
-      <form id="chat-form" phx-hook="ChatForm" phx-submit="send_message" class="flex items-center gap-2">
-        <label class="terminal-mono flex min-w-0 flex-1 items-center gap-2 text-zinc-200">
-          <span class="terminal-prompt-char select-none text-zinc-600" aria-hidden="true">&gt;</span>
-          <input
-            id="chat-input"
-            type="text"
-            name="message"
-            value={@input}
-            placeholder={@input_placeholder}
-            class="terminal-input min-w-0 flex-1 border-0 bg-transparent py-0.5 text-zinc-200 placeholder:text-zinc-600 focus:outline-none focus:ring-0"
-            autocomplete="off"
-            spellcheck="false"
-            enterkeyhint="done"
-            inputmode="text"
-            phx-change="update_input"
-            phx-debounce="300"
-          />
-        </label>
+    <!-- Composer: form id remount clears; phx-mounted JS.focus refocuses the new input. -->
+    <div style="flex-shrink:0;position:relative;z-index:100;padding:12px;background:#09090b;">
+      <form
+        id={"chat-form-#{@composer_form_id}"}
+        phx-submit="send_message"
+        style="display:flex;align-items:center;gap:8px;width:100%;"
+      >
+        <span aria-hidden="true" style="flex-shrink:0;color:#71717a;font-size:16px;line-height:1.4;user-select:none;">❯</span>
+        <input
+          type="text"
+          name="message"
+          id={"message-#{@composer_form_id}"}
+          placeholder={@input_placeholder}
+          autocomplete="off"
+          phx-mounted={JS.focus()}
+          style="display:block;flex:1;min-width:0;width:100%;box-sizing:border-box;padding:10px 0;font-size:16px;line-height:1.4;color:#e4e4e7;background:transparent;border:0;border-radius:0;outline:none;pointer-events:auto;"
+        />
         <%= if @is_loading do %>
           <button
             type="button"
             phx-click="cancel_run"
             id="cancel-run-btn"
-            class="btn-glow btn-glow-danger term-btn term-btn-danger term-btn-icon shrink-0"
+            class="term-btn term-btn-danger"
+            style="flex-shrink:0;"
             aria-label="Stop"
-            title="Stop generating"
           >
-            <span class="btn-glow-fx" aria-hidden="true"></span>
-            <span aria-hidden="true">■</span>
+            <span>stop</span>
           </button>
         <% else %>
           <button
             type="submit"
             id="send-btn"
-            class="mobile-only-send btn-glow term-btn term-btn-lg shrink-0"
+            class="mobile-only-send term-btn"
+            style="flex-shrink:0;"
             aria-label="Send"
-            title="Send"
           >
-            <span class="btn-glow-fx" aria-hidden="true"></span>
             <span>send</span>
           </button>
         <% end %>
       </form>
 
-      <!-- Minimal suggestions (only when empty) -->
       <%= if @messages == [] and not @is_loading and @suggestions do %>
         <div class="mt-2.5 flex flex-wrap justify-center gap-1.5 px-1">
           <%= for s <- @suggestions do %>
@@ -281,18 +273,13 @@
               type="button"
               phx-click="send_suggestion"
               phx-value-message={s.prompt}
-              class="btn-glow term-btn term-btn-lg"
+              class="term-btn term-btn-lg"
             >
-              <span class="btn-glow-fx" aria-hidden="true"></span>
               <span><%= s.label %></span>
             </button>
           <% end %>
         </div>
       <% end %>
-
-      <p class="mt-2.5 px-1 text-center text-[10px] tracking-wide text-zinc-700">
-        LiveView · streaming · fact-checked
-      </p>
     </div>
   </div>
 </div>

@@ -1,6 +1,7 @@
 defmodule AgentBackendWeb.ChatLive do
   use AgentBackendWeb, :live_view
 
+  alias Phoenix.LiveView.JS
   import Phoenix.HTML, only: [raw: 1]
 
   @user_error "Something went wrong on my side. Please try again."
@@ -92,6 +93,8 @@ defmodule AgentBackendWeb.ChatLive do
       |> assign(
         messages: messages,
         input: "",
+        # Bump after each send so the form DOM remounts empty (LV form reset pattern).
+        composer_form_id: 0,
         is_loading: is_loading,
         agent_status: agent_status,
         held_draft: held_draft,
@@ -235,6 +238,36 @@ defmodule AgentBackendWeb.ChatLive do
     )
   end
 
+  defp broadcast_composer(nil, _input), do: :ok
+
+  defp broadcast_composer(chat_id, input) when is_binary(chat_id) and is_binary(input) do
+    Phoenix.PubSub.broadcast(
+      AgentBackend.PubSub,
+      chat_topic(chat_id),
+      {:composer_input, self(), input}
+    )
+  end
+
+  defp set_composer(socket, input) when is_binary(input) do
+    broadcast_composer(socket.assigns.chat_id, input)
+    assign(socket, input: input)
+  end
+
+  # LiveView keeps focused/submitted input values client-side. Remounting the form
+  # (new id) is the supported way to get a blank field after submit.
+  # https://hexdocs.pm/phoenix_live_view/form-bindings.html
+  defp reset_composer_form(socket) do
+    socket
+    |> assign(
+      input: "",
+      composer_form_id: (socket.assigns[:composer_form_id] || 0) + 1
+    )
+    |> then(fn s ->
+      broadcast_composer(s.assigns.chat_id, "")
+      s
+    end)
+  end
+
   @impl true
   def handle_event("new_chat", _params, socket) do
     {:noreply,
@@ -242,6 +275,7 @@ defmodule AgentBackendWeb.ChatLive do
      |> assign(
        messages: [],
        input: "",
+       composer_form_id: 0,
        chat_id: nil,
        run_id: nil,
        is_loading: false,
@@ -272,7 +306,7 @@ defmodule AgentBackendWeb.ChatLive do
         Map.get(params, "value") ||
         ""
 
-    {:noreply, assign(socket, input: input)}
+    {:noreply, set_composer(socket, input)}
   end
 
   @impl true
@@ -470,10 +504,10 @@ defmodule AgentBackendWeb.ChatLive do
               held_draft: nil,
               validation_badge: false,
               thinking_line: AgentBackendWeb.TypingLines.random_line(),
-              input: "",
               chat_id: chat_id,
               run_id: run_id
             )
+            |> reset_composer_form()
             |> schedule_thinking_tick()
 
           socket =
@@ -599,6 +633,16 @@ defmodule AgentBackendWeb.ChatLive do
        |> schedule_thinking_tick()}
     else
       {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_info({:composer_input, from_pid, input}, socket) when is_binary(input) do
+    # Optional multi-tab draft assign (DOM is uncontrolled; remount only on send).
+    if from_pid == self() do
+      {:noreply, socket}
+    else
+      {:noreply, assign(socket, input: input)}
     end
   end
 
