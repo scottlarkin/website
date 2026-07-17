@@ -2,12 +2,12 @@
   id="chat-root"
   class="h-dvh overflow-hidden bg-zinc-950 text-zinc-200 flex flex-col font-mono"
 >
-  <div data-reconnect-banner class="hidden border-b border-amber-900/50 bg-amber-950/40 px-4 py-1.5 text-center text-xs text-amber-200/80">
+  <div data-reconnect-banner class="hidden border-b border-amber-900/50 bg-amber-950/40 px-3 sm:px-5 lg:px-8 py-1.5 text-center text-xs text-amber-200/80">
     Reconnecting…
   </div>
 
-  <!-- Minimal header -->
-  <header class="sticky top-0 z-20 shrink-0 flex items-center justify-between border-b border-zinc-800/80 bg-zinc-950/95 px-4 py-3 backdrop-blur-sm header-accent">
+  <!-- Minimal header — side padding matches chat column -->
+  <header class="sticky top-0 z-20 shrink-0 flex items-center justify-between border-b border-zinc-800/80 bg-zinc-950/95 px-3 sm:px-5 lg:px-8 py-3 backdrop-blur-sm header-accent">
     <button
       type="button"
       phx-click="new_chat"
@@ -42,12 +42,13 @@
     </div>
   </header>
 
-  <!-- Chat container -->
-  <div class="flex-1 min-h-0 flex flex-col overflow-hidden max-w-2xl w-full mx-auto">
+  <!-- Chat container: full width; side padding grows with viewport (tight on phones) -->
+  <div class="flex-1 min-h-0 flex flex-col overflow-hidden w-full max-w-none px-3 sm:px-5 lg:px-8">
     <!-- Messages -->
     <div
       id="messages"
-      class={"flex-1 min-h-0 overflow-y-auto px-4 py-6 space-y-4 scrollbar-chat" <> if(@messages == [], do: " empty-stage", else: "")}
+      class={"flex-1 min-h-0 overflow-y-auto overscroll-contain py-4 sm:py-6 space-y-4 scrollbar-chat" <> if(@messages == [], do: " empty-stage", else: "")}
+      data-loading={if(@is_loading, do: "true", else: "false")}
       phx-hook="AutoScroll"
     >
       <%= if @messages == [] do %>
@@ -56,7 +57,7 @@
           phx-update="ignore"
           data-suggestion-typewriter
           data-suggestions={Jason.encode!(@typewriter_prompts)}
-          class="flex h-full flex-col items-center justify-center text-center px-4 relative z-10"
+          class="flex h-full flex-col items-center justify-center text-center relative z-10"
         >
           <h2 class="text-xl font-semibold text-zinc-100 tracking-tight">Hi, I'm Scott.</h2>
           <p class="terminal-mono mt-3 max-w-sm text-sm text-zinc-500">
@@ -223,25 +224,31 @@
           </div>
         <% end %>
       <% end %>
+      <%!-- Stable bottom sentinel so AutoScroll can pin the tail after morphdom patches --%>
+      <div id="messages-end" class="h-px w-full shrink-0" aria-hidden="true"></div>
     </div>
 
-    <!-- Composer: form id remount clears; phx-mounted JS.focus refocuses the new input. -->
-    <div style="flex-shrink:0;position:relative;z-index:100;padding:12px;background:#09090b;">
+    <!-- Composer: stable form id + phx-change enables LV reconnect recovery.
+         https://phoenix-live-view.hexdocs.pm/form-bindings.html#recovery-following-crashes-or-disconnects -->
+    <div class="composer-bar shrink-0 relative z-[100] py-3 bg-zinc-950">
       <form
-        id={"chat-form-#{@composer_form_id}"}
+        id="chat-form"
+        phx-change="update_input"
         phx-submit="send_message"
-        style="display:flex;align-items:center;gap:8px;width:100%;"
+        style="display:flex;align-items:flex-end;gap:8px;width:100%;"
       >
-        <span aria-hidden="true" style="flex-shrink:0;color:#71717a;font-size:16px;line-height:1.4;user-select:none;">❯</span>
-        <input
-          type="text"
+        <span aria-hidden="true" style="flex-shrink:0;color:#71717a;font-size:16px;line-height:1.4;padding-bottom:10px;user-select:none;">❯</span>
+        <textarea
           name="message"
-          id={"message-#{@composer_form_id}"}
+          id="message"
+          rows="1"
           placeholder={@input_placeholder}
           autocomplete="off"
+          phx-debounce="150"
+          phx-hook="Composer"
           phx-mounted={JS.focus()}
-          style="display:block;flex:1;min-width:0;width:100%;box-sizing:border-box;padding:10px 0;font-size:16px;line-height:1.4;color:#e4e4e7;background:transparent;border:0;border-radius:0;outline:none;pointer-events:auto;"
-        />
+          style="display:block;flex:1;min-width:0;width:100%;box-sizing:border-box;padding:10px 0;font-size:16px;line-height:1.4;color:#e4e4e7;background:transparent;border:0;border-radius:0;outline:none;pointer-events:auto;resize:none;overflow-y:auto;"
+        ><%= @input %></textarea>
         <%= if @is_loading do %>
           <button
             type="button"
@@ -267,7 +274,7 @@
       </form>
 
       <%= if @messages == [] and not @is_loading and @suggestions do %>
-        <div class="mt-2.5 flex flex-wrap justify-center gap-1.5 px-1">
+        <div class="mt-2.5 flex flex-wrap justify-start gap-1.5">
           <%= for s <- @suggestions do %>
             <button
               type="button"

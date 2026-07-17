@@ -151,27 +151,121 @@ function hideReconnectBanner() {
   document.querySelector("[data-reconnect-banner]")?.classList.add("hidden")
 }
 
+// ~8 lines at 16px / 1.4 line-height + vertical padding
+const COMPOSER_MAX_HEIGHT_PX = Math.round(16 * 1.4 * 8 + 20)
+
 let Hooks = {
+  // Stick #messages to the bottom while the user is following the tail.
+  // During active generation (data-loading="true") always follow.
+  // Never gate on composer focus — the textarea stays focused during streams.
   AutoScroll: {
     mounted() {
-      this.observer = new MutationObserver(() => this.scrollToBottom())
-      this.observer.observe(this.el, {childList: true, subtree: true, characterData: true})
+      this.stickToBottom = true
+      this.thresholdPx = 120
+      this.programmatic = false
+      this.msgCount = this.countMessages()
+
+      this.onScroll = () => {
+        if (this.programmatic) return
+        const el = this.el
+        const distance = el.scrollHeight - el.scrollTop - el.clientHeight
+        this.stickToBottom = distance <= this.thresholdPx
+      }
+      this.el.addEventListener("scroll", this.onScroll, {passive: true})
+
+      this.observer = new MutationObserver(() => {
+        const n = this.countMessages()
+        // New user/assistant bubble → always snap to bottom
+        if (n !== this.msgCount) {
+          this.msgCount = n
+          this.stickToBottom = true
+        }
+        this.maybeScroll()
+      })
+      this.observer.observe(this.el, {
+        childList: true,
+        subtree: true,
+        characterData: true
+      })
+
       this.scrollToBottom()
     },
     updated() {
-      this.scrollToBottom()
+      // Server patches while streaming: keep following if loading or stuck to bottom
+      if (this.el.dataset.loading === "true") this.stickToBottom = true
+      this.maybeScroll()
     },
     destroyed() {
       this.observer?.disconnect()
+      this.el.removeEventListener("scroll", this.onScroll)
+      if (this._releaseTimer) clearTimeout(this._releaseTimer)
+    },
+    countMessages() {
+      return this.el.querySelectorAll("[id^='msg-']").length
+    },
+    maybeScroll() {
+      if (this.stickToBottom || this.el.dataset.loading === "true") {
+        this.scrollToBottom()
+      }
     },
     scrollToBottom() {
-      const active = document.activeElement
-      if (active && active.tagName === "INPUT" && active.name === "message") return
+      const el = this.el
+      this.programmatic = true
+      if (this._releaseTimer) clearTimeout(this._releaseTimer)
+
+      const apply = () => {
+        // Direct assignment — do not use scrollIntoView (it can scroll the window)
+        el.scrollTop = el.scrollHeight
+      }
+
+      apply()
+      // Layout may lag one or two frames behind morphdom / markdown paint
       requestAnimationFrame(() => {
-        const again = document.activeElement
-        if (again && again.tagName === "INPUT" && again.name === "message") return
-        this.el.scrollTop = this.el.scrollHeight
+        apply()
+        requestAnimationFrame(() => {
+          apply()
+          this._releaseTimer = setTimeout(() => {
+            this.programmatic = false
+            this.stickToBottom = true
+          }, 50)
+        })
       })
+    }
+  },
+
+  // Enter sends; Shift+Enter inserts a newline. Auto-grows up to COMPOSER_MAX_HEIGHT_PX.
+  Composer: {
+    mounted() {
+      this.onKeyDown = (e) => {
+        if (e.key !== "Enter" || e.shiftKey) return
+        if (e.isComposing || e.keyCode === 229) return
+        e.preventDefault()
+        const form = this.el.form
+        if (!form) return
+        if (typeof form.requestSubmit === "function") {
+          form.requestSubmit()
+        } else {
+          form.dispatchEvent(new Event("submit", {bubbles: true, cancelable: true}))
+        }
+      }
+      this.onInput = () => this.resize()
+      this.el.addEventListener("keydown", this.onKeyDown)
+      this.el.addEventListener("input", this.onInput)
+      this.resize()
+    },
+    updated() {
+      this.resize()
+    },
+    destroyed() {
+      this.el.removeEventListener("keydown", this.onKeyDown)
+      this.el.removeEventListener("input", this.onInput)
+    },
+    resize() {
+      const el = this.el
+      el.style.height = "auto"
+      const next = Math.min(el.scrollHeight, COMPOSER_MAX_HEIGHT_PX)
+      el.style.height = `${next}px`
+      el.style.overflowY = el.scrollHeight > COMPOSER_MAX_HEIGHT_PX ? "auto" : "hidden"
     }
   },
 

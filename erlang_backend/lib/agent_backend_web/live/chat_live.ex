@@ -93,8 +93,6 @@ defmodule AgentBackendWeb.ChatLive do
       |> assign(
         messages: messages,
         input: "",
-        # Bump after each send so the form DOM remounts empty (LV form reset pattern).
-        composer_form_id: 0,
         is_loading: is_loading,
         agent_status: agent_status,
         held_draft: held_draft,
@@ -253,15 +251,12 @@ defmodule AgentBackendWeb.ChatLive do
     assign(socket, input: input)
   end
 
-  # LiveView keeps focused/submitted input values client-side. Remounting the form
-  # (new id) is the supported way to get a blank field after submit.
-  # https://hexdocs.pm/phoenix_live_view/form-bindings.html
+  # Clear draft via assign (textarea is bound to @input). With phx-change + stable form id,
+  # LV form recovery restores mid-typing drafts after reconnect.
+  # https://phoenix-live-view.hexdocs.pm/form-bindings.html#recovery-following-crashes-or-disconnects
   defp reset_composer_form(socket) do
     socket
-    |> assign(
-      input: "",
-      composer_form_id: (socket.assigns[:composer_form_id] || 0) + 1
-    )
+    |> assign(input: "")
     |> then(fn s ->
       broadcast_composer(s.assigns.chat_id, "")
       s
@@ -275,7 +270,6 @@ defmodule AgentBackendWeb.ChatLive do
      |> assign(
        messages: [],
        input: "",
-       composer_form_id: 0,
        chat_id: nil,
        run_id: nil,
        is_loading: false,
@@ -409,7 +403,6 @@ defmodule AgentBackendWeb.ChatLive do
         agent_status: agent_status,
         held_draft: held_draft,
         run_id: run_id,
-        input: "",
         thinking_line:
           if(is_loading,
             do: socket.assigns.thinking_line || AgentBackendWeb.TypingLines.random_line(),
@@ -638,7 +631,7 @@ defmodule AgentBackendWeb.ChatLive do
 
   @impl true
   def handle_info({:composer_input, from_pid, input}, socket) when is_binary(input) do
-    # Optional multi-tab draft assign (DOM is uncontrolled; remount only on send).
+    # Multi-tab draft sync — textarea is bound to @input.
     if from_pid == self() do
       {:noreply, socket}
     else
@@ -941,7 +934,10 @@ defmodule AgentBackendWeb.ChatLive do
   defp render_markdown(content) when is_binary(content) do
     case Earmark.as_html(content, code_class_prefix: "language-") do
       {:ok, html, _messages} ->
-        raw(sanitize_html(html))
+        html
+        |> sanitize_html()
+        |> wrap_markdown_tables()
+        |> raw()
 
       _ ->
         escaped =
@@ -963,5 +959,12 @@ defmodule AgentBackendWeb.ChatLive do
     |> String.replace(~r/<\s*embed\b[^>]*\/?>/is, "")
     |> String.replace(~r/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/i, "")
     |> String.replace(~r/javascript\s*:/i, "")
+  end
+
+  # Scroll shell for wide GFM tables (styles in app.css `.term-table-wrap`).
+  def wrap_markdown_tables(html) when is_binary(html) do
+    html
+    |> String.replace(~r/<table\b/i, ~s(<div class="term-table-wrap"><table))
+    |> String.replace(~r/<\/table>/i, ~s(</table></div>))
   end
 end

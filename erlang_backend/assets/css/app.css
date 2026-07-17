@@ -11,14 +11,34 @@
 
 html, body {
   height: 100%;
+  overflow: hidden; /* page must not scroll — #messages is the only scroller */
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   /* Keep glyph widths stable for terminal caret (N ch) */
   font-variant-ligatures: none;
   font-feature-settings: "liga" 0, "calt" 0;
 }
 
-#root {
+/* LiveView root wrapper + legacy #root — fill viewport so chat flex chain works */
+#root,
+[data-phx-main] {
   height: 100%;
+  min-height: 100%;
+  overflow: hidden;
+}
+
+#chat-root {
+  height: 100%;
+  max-height: 100dvh;
+  /* Notch / home-indicator safe areas (iOS PWA / landscape phones) */
+  padding-left: env(safe-area-inset-left, 0px);
+  padding-right: env(safe-area-inset-right, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+#messages {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 @layer utilities {
@@ -91,11 +111,13 @@ html, body {
 }
 
 /*
- * Composer input — pure CSS only (no JS caret).
+ * Composer field — pure CSS only (no JS caret).
  * caret-color: all modern browsers (app sky #38bdf8).
  * caret-shape: block — Firefox; ignored elsewhere (falls back to thin bar).
+ * Auto-grow height is handled by the Composer LiveView hook (max ~8 lines).
  */
-input[name="message"] {
+input[name="message"],
+textarea[name="message"] {
   /* lock glyph width so a block caret lines up with mono text */
   font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-variant-ligatures: none;
@@ -105,18 +127,29 @@ input[name="message"] {
   caret-shape: block;
 }
 
-input[name="message"]::placeholder {
+textarea[name="message"] {
+  resize: none;
+  overflow-y: hidden;
+  field-sizing: content;
+  max-height: calc(16px * 1.4 * 8 + 20px);
+  min-height: calc(16px * 1.4 + 20px);
+}
+
+input[name="message"]::placeholder,
+textarea[name="message"]::placeholder {
   color: #3f3f46;
   opacity: 1;
 }
-input[name="message"]::-webkit-input-placeholder {
+input[name="message"]::-webkit-input-placeholder,
+textarea[name="message"]::-webkit-input-placeholder {
   color: #3f3f46;
   opacity: 1;
 }
 
 /* Prefer block caret when the engine supports the property (progressive). */
 @supports (caret-shape: block) {
-  input[name="message"] {
+  input[name="message"],
+  textarea[name="message"] {
     caret-shape: block;
   }
 }
@@ -137,9 +170,9 @@ button.mobile-only-send {
     display: inline-flex !important;
   }
 
-  #messages {
-    -webkit-overflow-scrolling: touch;
-    overscroll-behavior: contain;
+  /* Slightly tighter message chrome so text uses scarce width */
+  .term-line {
+    padding: 0.45rem 0.5rem;
   }
 }
 
@@ -389,6 +422,53 @@ button.mobile-only-send {
   margin: 0.5em 0;
   border: 0;
   border-top: 1px solid #3f3f46;
+}
+
+/* GFM tables (Earmark) — bordered, scroll wide content, match terminal zinc palette */
+.term-table-wrap {
+  display: block;
+  max-width: 100%;
+  margin: 0.45em 0;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.term-prose table {
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
+  border-collapse: collapse;
+  font-size: 0.9em;
+  line-height: 1.4;
+}
+
+.term-prose thead {
+  border-bottom: 1px solid #52525b;
+}
+
+.term-prose th,
+.term-prose td {
+  padding: 0.3em 0.55em;
+  border: 1px solid #3f3f46;
+  vertical-align: top;
+  /* Parent uses overflow-wrap: anywhere / word-break: break-word — too aggressive in cells */
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.term-prose th {
+  background: #27272a;
+  color: #fafafa;
+  font-weight: 600;
+}
+
+.term-prose td {
+  color: #d4d4d8;
+  background: #18181b;
+}
+
+.term-prose tbody tr:nth-child(even) td {
+  background: #1f1f23;
 }
 
 /* Terminal-style controls: square, no border chrome, [bracket] affordance */

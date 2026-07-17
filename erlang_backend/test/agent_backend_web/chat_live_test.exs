@@ -18,7 +18,7 @@ defmodule AgentBackendWeb.ChatLiveTest do
     {:ok, view, _html} = live(conn, "/")
 
     view
-    |> form("#chat-form", %{message: "Where do you work?"})
+    |> form(~s(#chat-form), %{message: "Where do you work?"})
     |> render_submit()
 
     # Wait for agent task to persist
@@ -49,6 +49,47 @@ defmodule AgentBackendWeb.ChatLiveTest do
     assert html =~ "Ravio"
   end
 
+  test "multi-line user message is preserved", %{conn: conn} do
+    LLM.push_stream({:ok, "Got it."})
+    LLM.push_complete(~s({"passed": true}))
+
+    {:ok, view, html} = live(conn, "/")
+    assert html =~ ~s(phx-hook="Composer") or html =~ "phx-hook=\"Composer\""
+    assert html =~ "<textarea"
+
+    multiline = "first line\nsecond line"
+
+    view
+    |> form(~s(#chat-form), %{message: multiline})
+    |> render_submit()
+
+    await_until(fn ->
+      dir = Application.get_env(:agent_backend, :chat_sessions_dir)
+
+      Enum.any?(Path.wildcard(Path.join(dir, "*.json")), fn path ->
+        case File.read(path) do
+          {:ok, body} ->
+            case Jason.decode(body) do
+              {:ok, %{"messages" => msgs}} ->
+                Enum.any?(msgs, fn m ->
+                  m["role"] == "user" and m["content"] == multiline
+                end)
+
+              _ ->
+                false
+            end
+
+          _ ->
+            false
+        end
+      end)
+    end)
+
+    rendered = render(view)
+    assert rendered =~ "first line"
+    assert rendered =~ "second line"
+  end
+
   test "busy chat rejects second concurrent send", %{conn: conn} do
     chat = unique_chat_id()
     run = "busy-run"
@@ -63,12 +104,12 @@ defmodule AgentBackendWeb.ChatLiveTest do
       assert :ok = ChatSessions.save(chat, msgs)
 
       {:ok, view, _html} = live(conn, "/c/#{chat}")
-      assert has_element?(view, "#chat-form")
+      assert has_element?(view, ~s(#chat-form))
 
       before = length(ChatSessions.get(chat).messages)
 
       view
-      |> form("#chat-form", %{message: "second"})
+      |> form(~s(#chat-form), %{message: "second"})
       |> render_submit()
 
       Process.sleep(50)
@@ -112,7 +153,7 @@ defmodule AgentBackendWeb.ChatLiveTest do
     {:ok, view, _html} = live(conn, "/")
 
     view
-    |> form("#chat-form", %{message: "trigger error"})
+    |> form(~s(#chat-form), %{message: "trigger error"})
     |> render_submit()
 
     await_until(fn ->
@@ -131,7 +172,7 @@ defmodule AgentBackendWeb.ChatLiveTest do
     {:ok, view, _html} = live(conn, "/")
 
     view
-    |> form("#chat-form", %{message: "tell me something"})
+    |> form(~s(#chat-form), %{message: "tell me something"})
     |> render_submit()
 
     await_until(fn ->
@@ -166,7 +207,7 @@ defmodule AgentBackendWeb.ChatLiveTest do
     LLM.push_complete(~s({"passed": true}))
 
     view
-    |> form("#chat-form", %{message: "another question"})
+    |> form(~s(#chat-form), %{message: "another question"})
     |> render_submit()
 
     await_until(fn ->
@@ -183,7 +224,7 @@ defmodule AgentBackendWeb.ChatLiveTest do
     {:ok, view, _html} = live(conn, "/")
 
     view
-    |> form("#chat-form", %{message: "will cancel empty"})
+    |> form(~s(#chat-form), %{message: "will cancel empty"})
     |> render_submit()
 
     await_until(fn ->
@@ -358,7 +399,7 @@ defmodule AgentBackendWeb.ChatLiveTest do
     {:ok, view, _html} = live(conn, "/")
 
     view
-    |> form("#chat-form", %{message: "trigger error for reload"})
+    |> form(~s(#chat-form), %{message: "trigger error for reload"})
     |> render_submit()
 
     await_until(fn ->
@@ -382,6 +423,42 @@ defmodule AgentBackendWeb.ChatLiveTest do
     last = List.last(ChatSessions.get(chat_id).messages)
     assert last.content == "recovered answer"
     refute Map.get(last, :error)
+  end
+
+  test "composer has stable form id and phx-change for reconnect recovery", %{conn: conn} do
+    {:ok, _view, html} = live(conn, "/")
+
+    assert html =~ ~s(id="chat-form")
+    assert html =~ ~s(phx-change="update_input")
+    assert html =~ ~s(id="message")
+    refute html =~ ~s(id="chat-form-0")
+  end
+
+  test "composer draft is kept on phx-change and cleared after send", %{conn: conn} do
+    LLM.push_stream({:ok, "ok"})
+    LLM.push_complete(~s({"passed": true}))
+
+    {:ok, view, _html} = live(conn, "/")
+
+    html =
+      view
+      |> form("#chat-form", %{message: "half typed draft"})
+      |> render_change()
+
+    assert html =~ ~r/<textarea[^>]*id="message"[^>]*>half typed draft<\/textarea>/
+
+    view
+    |> form("#chat-form", %{message: "half typed draft"})
+    |> render_submit()
+
+    await_until(fn ->
+      render(view) =~ "ok"
+    end)
+
+    html = render(view)
+    # User message stays in the transcript; only the composer draft is cleared.
+    assert html =~ "half typed draft"
+    assert html =~ ~r/<textarea[^>]*id="message"[^>]*>\s*<\/textarea>/
   end
 
   defp chat_id_from_view(view) do
