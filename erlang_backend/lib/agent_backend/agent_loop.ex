@@ -6,6 +6,10 @@ defmodule AgentBackend.AgentLoop do
   """
 
   @agent_instructions """
+  Be concise. Tokens cost money. Default to short replies (a few sentences,
+  ~80 words). Do not pad, recap, or write long essays unless the user clearly
+  asks for depth or a full history. Answer only what was asked.
+
   Ground every answer strictly in the biography/facts in the system message.
 
   Do not invent: employers, roles, timelines, projects, metrics, product names,
